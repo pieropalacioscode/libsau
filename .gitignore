@@ -21,4 +21,11 @@ cookies.txt
 
 # Archivos grandes
 *.tar.gz
+# Build Go
+*.out
 
+# Docker
+*.env.local
+
+# Coverage (tests)
+coverage.out
