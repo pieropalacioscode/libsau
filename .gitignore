@@ -1,0 +1,24 @@
+# Entorno
+.env
+
+# Go
+bin/
+*.exe
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Cookies / pruebas
+cookies.txt
+
+# Archivos grandes
+*.tar.gz
+

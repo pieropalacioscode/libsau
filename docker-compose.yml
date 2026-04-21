@@ -1,0 +1,78 @@
+name: libsau
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: libsau_postgres
+    restart: unless-stopped
+    shm_size: 128mb
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    command:
+      [
+        "postgres",
+        "-c", "shared_buffers=128MB",
+        "-c", "max_connections=50",
+        "-c", "work_mem=4MB",
+        "-c", "maintenance_work_mem=64MB",
+        "-c", "effective_cache_size=256MB"
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 512m
+    mem_reservation: 256m
+    networks:
+      - libsau_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: libsau_redis
+    restart: unless-stopped
+    env_file:
+      - .env
+    command:
+      [
+        "redis-server",
+        "--appendonly", "yes",
+        "--requirepass", "${REDIS_PASSWORD}",
+        "--save", "60", "1",
+        "--loglevel", "warning"
+      ]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+    mem_reservation: 64m
+    networks:
+      - libsau_net
+
+volumes:
+  pgdata:
+    name: libsau_pgdata
+  redisdata:
+    name: libsau_redisdata
+
+networks:
+  libsau_net:
+    name: libsau_net
+    driver: bridge
