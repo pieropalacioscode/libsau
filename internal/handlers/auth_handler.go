@@ -71,20 +71,27 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// ✅ LOGIN CORRECTO → resetear contador
 	h.rdb.Del(ctx, rateKey)
 
-	accessToken, _ := auth.GenerateAccessToken(user.ID, user.Email, string(user.Role))
-	refreshToken, _ := auth.GenerateRefreshToken(user.ID)
+	accessToken, err := auth.GenerateAccessToken(user.ID, user.Email, string(user.Role))
+	if err != nil {
+		http.Error(w, "error generando token", http.StatusInternalServerError)
+		return
+	}
 
-	key := fmt.Sprintf("refresh:user:%d", user.ID)
-	h.rdb.Set(ctx, key, refreshToken, 7*24*time.Hour)
+	// json.NewEncoder(w).Encode(map[string]string{
+	// 	"access_token": accessToken,
+	// }) // refreshToken, _ := auth.GenerateRefreshToken(user.ID)
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    refreshToken,
-		HttpOnly: true,
-		Path:     "/auth/refresh",
-		MaxAge:   7 * 24 * 60 * 60,
-	})
+	// key := fmt.Sprintf("refresh:user:%d", user.ID)
+	// h.rdb.Set(ctx, key, refreshToken, 7*24*time.Hour)
 
+	// http.SetCookie(w, &http.Cookie{
+	// 	Name: "refresh_token",
+	// 	// Value:    refreshToken,
+	// 	HttpOnly: true,
+	// 	Path:     "/auth/refresh",
+	// 	MaxAge:   7 * 24 * 60 * 60,
+	// })
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"access_token": accessToken,
 	})

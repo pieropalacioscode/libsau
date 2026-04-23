@@ -1,0 +1,146 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-gray-50">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Librería Saber</title>
+
+  <!-- Tailwind CSS (CDN para desarrollo — en prod usar build) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- HTMX — el núcleo del frontend -->
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
+  <!-- Configuración de Tailwind -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 600: '#2563eb', 700: '#1d4ed8' }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Animación de loading para HTMX */
+    .htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+    .htmx-request .htmx-indicator { opacity: 1; }
+    .htmx-request.htmx-indicator { opacity: 1; }
+  </style>
+</head>
+
+<body class="h-full" id="app">
+
+  {{template "content" .}}
+
+  <!-- Scripts globales -->
+  <script>
+    // ── Interceptor HTMX: adjuntar JWT en cada request ─────────────────────
+    // El token vive en memoria (sessionStorage), nunca en localStorage.
+   document.addEventListener('htmx:configRequest', function(e) {
+      const token = sessionStorage.getItem('access_token');
+      console.log("TOKEN ENVIADO:", token); // 👈 DEBUG
+
+      if (token) {
+        e.detail.headers['Authorization'] = 'Bearer ' + token;
+      }
+    });
+
+    // ── Redirigir al login si el servidor devuelve 401 ──────────────────────
+    document.addEventListener('htmx:responseError', function(e) {
+      if (e.detail.xhr.status === 401) {
+        sessionStorage.removeItem('access_token');
+        window.location.href = '/login';
+      }
+    });
+
+    // ── Lector de código de barras (HID — actúa como teclado) ───────────────
+    // Captura globalmente: no importa en qué elemento esté el foco.
+    // Un barcode scanner envía los caracteres muy rápido (< 50ms entre chars)
+    // seguido de Enter. Detectamos eso y disparamos la búsqueda.
+    (function() {
+      let buffer = '';
+      let lastKeyTime = 0;
+      const SCANNER_SPEED_MS = 50; // el scanner escribe más rápido que un humano
+
+      document.addEventListener('keydown', function(e) {
+        const now = Date.now();
+
+        // Si hay un input con foco que no sea el de búsqueda, ignorar
+        const active = document.activeElement;
+        const isSearchInput = active && active.id === 'search-input';
+        const isOtherInput  = active && 
+          (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') &&
+          !isSearchInput;
+
+        if (isOtherInput) return;
+
+        if (e.key === 'Enter' && buffer.length > 3) {
+          // Enter después de buffer = código de barras completo
+          const sku = buffer.trim();
+          buffer = '';
+
+          // Poner el SKU en el input y disparar búsqueda HTMX
+          const input = document.getElementById('search-input');
+          if (input) {
+            input.value = sku;
+            // Disparar htmx manualmente para búsqueda inmediata
+            htmx.trigger(input, 'scanner-input');
+          }
+          return;
+        }
+
+        // Acumular caracteres solo si vienen rápido (scanner) o ya hay buffer
+        if (now - lastKeyTime < SCANNER_SPEED_MS || buffer.length > 0) {
+          if (e.key.length === 1) { // solo caracteres imprimibles
+            buffer += e.key;
+          }
+        } else {
+          buffer = e.key.length === 1 ? e.key : '';
+        }
+
+        lastKeyTime = now;
+
+        // Timeout de seguridad: limpiar buffer si el scanner se cuelga
+        clearTimeout(window._bufferTimeout);
+        window._bufferTimeout = setTimeout(() => { buffer = ''; }, 500);
+      });
+    })();
+
+    // ── Beep de error cuando stock = 0 ─────────────────────────────────────
+    function beepError() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 400;   // Hz — tono bajo = error
+        gain.gain.value = 0.3;
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3); // 300ms de beep
+      } catch(e) {}
+    }
+
+    function beepOk() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 880;   // Hz — tono alto = éxito
+        gain.gain.value = 0.2;
+        osc.start();
+        osc.stop(ctx.currentTime + 0.1);
+      } catch(e) {}
+    }
+  </script>
+
+</body>
+</html>
+{{end}}

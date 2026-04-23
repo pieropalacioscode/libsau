@@ -15,7 +15,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-var secret = []byte(os.Getenv("JWT_SECRET"))
+// 🔥 PROTECCIÓN: nunca permitir secret vacío
+var secret = func() []byte {
+	s := os.Getenv("JWT_SECRET")
+	if s == "" {
+		panic("JWT_SECRET no está definido")
+	}
+	return []byte(s)
+}()
 
 var ErrTokenExpired = errors.New("token expirado")
 
@@ -36,22 +43,13 @@ func GenerateAccessToken(userID uint, email, role string) (string, error) {
 	return token.SignedString(secret)
 }
 
-// ───── REFRESH TOKEN (7 días) ─────
-func GenerateRefreshToken(userID uint) (string, error) {
-	claims := jwt.RegisteredClaims{
-		Subject:   string(rune(userID)),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		Issuer:    "libsau",
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(secret)
-}
-
 // ───── VALIDAR ACCESS TOKEN ─────
 func ValidateAccessToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
+		// 🔒 Validar método de firma
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("método de firma inválido")
+		}
 		return secret, nil
 	})
 

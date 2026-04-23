@@ -1,0 +1,406 @@
+{{define "content"}}
+
+<!-- ── Navbar ────────────────────────────────────────────────────────────── -->
+<nav class="bg-blue-700 text-white px-6 py-3 flex justify-between items-center shadow-md">
+  <span class="font-bold text-lg tracking-wide">📚 Librería Saber · POS</span>
+  <div class="flex gap-4 items-center text-sm">
+    <a href="/dashboard" class="hover:text-blue-200 transition">📊 Dashboard</a>
+    <button onclick="logout()"
+      class="bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded transition">
+      🚪 Salir
+    </button>
+  </div>
+</nav>
+
+<!-- ── Layout principal: 2 columnas ─────────────────────────────────────── -->
+<div class="flex h-[calc(100vh-52px)]">
+
+  <!-- ── Columna izquierda: búsqueda y resultados ─────────────────────── -->
+  <div class="flex-1 flex flex-col p-4 overflow-hidden border-r border-gray-200 bg-white">
+
+    <!-- Campo de búsqueda -->
+    <div class="relative mb-4">
+      <input
+        id="search-input"
+        type="text"
+        placeholder="Busca por nombre, SKU o escanea código de barras..."
+        autocomplete="off"
+        class="w-full border border-gray-300 rounded-lg px-4 py-3 pr-10 text-sm
+               focus:outline-none focus:ring-2 focus:ring-blue-500"
+
+        hx-get="/api/v1/products/search"
+        hx-trigger="keyup changed delay:300ms, scanner-input"
+        hx-target="#search-results"
+        hx-indicator="#search-spinner"
+        name="q"
+      >
+      <!-- Spinner HTMX -->
+      <span id="search-spinner"
+        class="htmx-indicator absolute right-3 top-3 text-blue-500 text-lg">⏳</span>
+    </div>
+
+    <!-- Resultados de búsqueda (HTMX los reemplaza) -->
+    <div id="search-results"
+      class="overflow-y-auto flex-1 space-y-2">
+      <p class="text-gray-400 text-sm text-center mt-8">
+        Escribe o escanea para buscar productos
+      </p>
+    </div>
+
+  </div>
+
+  <!-- ── Columna derecha: carrito ──────────────────────────────────────── -->
+  <div class="w-96 flex flex-col bg-gray-50 p-4">
+
+    <h2 class="font-bold text-gray-700 text-sm uppercase tracking-wide mb-3">
+      🛒 Carrito
+    </h2>
+
+    <!-- Ítems del carrito (gestionados por JS) -->
+    <div id="cart-items" class="flex-1 overflow-y-auto space-y-2 mb-4">
+      <p id="cart-empty" class="text-gray-400 text-sm text-center mt-8">
+        El carrito está vacío
+      </p>
+    </div>
+
+    <!-- Total -->
+    <div class="border-t border-gray-300 pt-3 mb-4">
+      <div class="flex justify-between items-center font-bold text-lg">
+        <span>Total</span>
+        <span id="cart-total" class="text-blue-700">S/ 0.00</span>
+      </div>
+    </div>
+
+    <!-- Método de pago -->
+    <div class="mb-4">
+      <p class="text-xs text-gray-500 mb-2 font-medium uppercase tracking-wide">
+        Método de pago
+      </p>
+      <div class="grid grid-cols-4 gap-1" id="pay-methods">
+        <button onclick="selectPayMethod('EFECTIVO')" id="btn-EFECTIVO"
+          class="pay-btn active-pay text-xs py-2 rounded border font-medium transition">
+          💵 Efect.
+        </button>
+        <button onclick="selectPayMethod('YAPE')" id="btn-YAPE"
+          class="pay-btn text-xs py-2 rounded border font-medium transition">
+          📱 Yape
+        </button>
+        <button onclick="selectPayMethod('PLIN')" id="btn-PLIN"
+          class="pay-btn text-xs py-2 rounded border font-medium transition">
+          💳 Plin
+        </button>
+        <button onclick="selectPayMethod('TARJETA')" id="btn-TARJETA"
+          class="pay-btn text-xs py-2 rounded border font-medium transition">
+          🏦 Tarjeta
+        </button>
+      </div>
+    </div>
+
+    <!-- Botón confirmar -->
+    <button onclick="confirmSale()"
+      id="btn-confirm"
+      class="w-full bg-blue-700 hover:bg-blue-600 disabled:bg-gray-300
+             text-white font-bold py-4 rounded-lg text-sm transition
+             flex items-center justify-center gap-2">
+      <span id="btn-confirm-text">CONFIRMAR VENTA</span>
+      <span id="btn-confirm-spinner" class="hidden">⏳</span>
+    </button>
+
+    <!-- Mensaje de resultado -->
+    <div id="sale-result" class="mt-3 text-sm text-center hidden"></div>
+
+  </div>
+</div>
+
+<!-- ── Modal de login (si no hay token) ─────────────────────────────────── -->
+<div id="login-modal"
+  class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 hidden">
+  <div class="bg-white rounded-xl shadow-2xl p-8 w-80">
+    <h2 class="font-bold text-xl mb-6 text-center text-gray-800">
+      📚 Librería Saber
+    </h2>
+    <input id="login-email" type="email" placeholder="Email"
+      class="w-full border rounded-lg px-4 py-2 mb-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+    <input id="login-password" type="password" placeholder="Contraseña"
+      class="w-full border rounded-lg px-4 py-2 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      onkeydown="if(event.key==='Enter') doLogin()">
+    <button onclick="doLogin()"
+      class="w-full bg-blue-700 text-white py-2 rounded-lg font-bold hover:bg-blue-600 transition">
+      Entrar
+    </button>
+    <p id="login-error" class="text-red-500 text-xs mt-3 text-center hidden"></p>
+  </div>
+</div>
+
+<script>
+// ── Estado del carrito (en memoria, no en localStorage) ────────────────────
+const cart = { items: [], payMethod: 'EFECTIVO' };
+
+// ── Al cargar la página: verificar si hay token ────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  const token = sessionStorage.getItem('access_token');
+  if (!token) {
+    document.getElementById('login-modal').classList.remove('hidden');
+  }
+  // Foco automático en el campo de búsqueda
+  document.getElementById('search-input').focus();
+});
+//login
+async function doLogin() {
+  const email    = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  const errEl    = document.getElementById('login-error');
+
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+
+    const data = await res.json();
+    console.log("LOGIN RESPONSE:", data); // 🔥 DEBUG
+
+    if (!res.ok) {
+      errEl.textContent = data.error || 'Error al iniciar sesión';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    if (!data.access_token) {
+      errEl.textContent = 'No se recibió token';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    sessionStorage.setItem('access_token', data.access_token);
+
+    console.log("TOKEN GUARDADO:", data.access_token); // 🔥 DEBUG
+
+    document.getElementById('login-modal').classList.add('hidden');
+    document.getElementById('search-input').focus();
+
+  } catch(e) {
+    console.error("LOGIN ERROR:", e);
+    errEl.textContent = 'Error de conexión';
+    errEl.classList.remove('hidden');
+  }
+}
+// ── Logout ─────────────────────────────────────────────────────────────────
+async function logout() {
+  const token = sessionStorage.getItem('access_token');
+  if (token) {
+    await fetch('/auth/logout', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+  }
+  sessionStorage.removeItem('access_token');
+  document.getElementById('login-modal').classList.remove('hidden');
+}
+
+// ── Agregar producto al carrito ────────────────────────────────────────────
+function addToCart(id, name, sku, price, stock) {
+  if (stock <= 0) {
+    beepError();
+    showSaleResult('❌ Sin stock: ' + name, 'text-red-600');
+    showSaleResult(`✔ ${name} agregado`, 'text-green-600');
+    return;
+  }
+
+  const existing = cart.items.find(i => i.id === id);
+  if (existing) {
+    if (existing.quantity >= stock) {
+      beepError();
+      showSaleResult('⚠️ Stock máximo: ' + stock + ' unid.', 'text-orange-600');
+      return;
+    }
+    existing.quantity++;
+  } else {
+    cart.items.push({ id, name, sku, price, stock, quantity: 1, discount: 0 });
+  }
+
+  beepOk();
+  renderCart();
+  document.getElementById('search-input').focus();
+}
+
+// ── Cambiar cantidad ───────────────────────────────────────────────────────
+function changeQty(id, delta) {
+  const item = cart.items.find(i => i.id === id);
+  if (!item) return;
+  item.quantity += delta;
+  if (item.quantity <= 0) {
+    cart.items = cart.items.filter(i => i.id !== id);
+  }
+  renderCart();
+}
+
+// ── Eliminar ítem ──────────────────────────────────────────────────────────
+function removeItem(id) {
+  cart.items = cart.items.filter(i => i.id !== id);
+  renderCart();
+}
+
+// ── Renderizar carrito ─────────────────────────────────────────────────────
+function renderCart() {
+  const container = document.getElementById('cart-items');
+  const totalEl   = document.getElementById('cart-total');
+  const confirmBtn = document.getElementById('btn-confirm');
+
+  // ── Carrito vacío ──
+  if (cart.items.length === 0) {
+    container.innerHTML = `
+      <p class="text-gray-400 text-sm text-center mt-8">
+        El carrito está vacío
+      </p>
+    `;
+    totalEl.textContent = 'S/ 0.00';
+    confirmBtn.disabled = true;
+    return;
+  }
+
+  confirmBtn.disabled = false;
+
+  let total = 0;
+
+  container.innerHTML = cart.items.map(item => {
+    const subtotal = (item.price - item.discount) * item.quantity;
+    total += subtotal;
+
+    return `
+      <div class="bg-white border border-gray-200 rounded-lg p-3 text-sm">
+        <div class="flex justify-between items-start">
+          <div class="flex-1 min-w-0">
+            <p class="font-medium text-gray-800 truncate">${item.name}</p>
+            <p class="text-gray-400 text-xs">${item.sku} · S/${item.price.toFixed(2)}</p>
+          </div>
+          <button onclick="removeItem(${item.id})"
+            class="text-red-400 hover:text-red-600 ml-2 text-lg leading-none">×</button>
+        </div>
+
+        <div class="flex items-center justify-between mt-2">
+          <div class="flex items-center gap-2">
+            <button onclick="changeQty(${item.id}, -1)"
+              class="w-7 h-7 bg-gray-100 hover:bg-gray-200 rounded font-bold">−</button>
+
+            <span class="w-6 text-center font-medium">${item.quantity}</span>
+
+            <button onclick="changeQty(${item.id}, 1)"
+              class="w-7 h-7 bg-gray-100 hover:bg-gray-200 rounded font-bold">+</button>
+          </div>
+
+          <span class="font-bold text-blue-700">
+            S/${subtotal.toFixed(2)}
+          </span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  totalEl.textContent = 'S/ ' + total.toFixed(2);
+}
+// ── Seleccionar método de pago ─────────────────────────────────────────────
+function selectPayMethod(method) {
+  cart.payMethod = method;
+  document.querySelectorAll('.pay-btn').forEach(btn => {
+    btn.className = 'pay-btn text-xs py-2 rounded border font-medium transition bg-white text-gray-700 border-gray-300 hover:bg-gray-50';
+  });
+  const active = document.getElementById('btn-' + method);
+  if (active) {
+    active.className = 'pay-btn text-xs py-2 rounded border font-medium transition bg-blue-700 text-white border-blue-700';
+  }
+}
+
+// Estilo inicial del botón activo
+selectPayMethod('EFECTIVO');
+
+// ── Confirmar venta ────────────────────────────────────────────────────────
+async function confirmSale() {
+  if (cart.items.length === 0) return;
+
+  const token = sessionStorage.getItem('access_token');
+  if (!token) {
+    document.getElementById('login-modal').classList.remove('hidden');
+    return;
+  }
+
+  // Deshabilitar botón durante el request
+  const btn     = document.getElementById('btn-confirm');
+  const btnText = document.getElementById('btn-confirm-text');
+  const spinner = document.getElementById('btn-confirm-spinner');
+  btn.disabled = true;
+  btnText.textContent = 'Procesando...';
+  spinner.classList.remove('hidden');
+
+  const payload = {
+    pay_method: cart.payMethod,
+    items: cart.items.map(i => ({
+      product_id: i.id,
+      quantity:   i.quantity,
+      discount:   i.discount
+    }))
+  };
+
+  try {
+    const res = await fetch('/api/v1/sales', {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await res.text();
+    console.log("RAW RESPONSE:", text);
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch(e) {
+      console.error("NO ES JSON:", text);
+      throw e;
+    }
+    if (!res.ok) {
+      beepError();
+      showSaleResult('❌ ' + (data.error || 'Error al procesar'), 'text-red-600');
+      return;
+    }
+
+    // Éxito: limpiar carrito y mostrar confirmación
+    beepOk();
+    const total = data.total || 0;
+    showSaleResult(
+      `✅ Venta #${data.id} registrada · S/ ${total.toFixed(2)} · ${cart.payMethod}`,
+      'text-green-700'
+    );
+
+    cart.items = [];
+    renderCart();
+    document.getElementById('search-input').value = '';
+    document.getElementById('search-results').innerHTML =
+      '<p class="text-gray-400 text-sm text-center mt-8">Escribe o escanea para buscar productos</p>';
+    document.getElementById('search-input').focus();
+
+  } catch(e) {
+    beepError();
+    showSaleResult('❌ Error de conexión', 'text-red-600');
+  } finally {
+    btn.disabled  = cart.items.length === 0;
+    btnText.textContent = 'CONFIRMAR VENTA';
+    spinner.classList.add('hidden');
+  }
+}
+
+// ── Mostrar resultado de la venta ──────────────────────────────────────────
+function showSaleResult(msg, colorClass) {
+  const el = document.getElementById('sale-result');
+  el.className = 'mt-3 text-sm text-center font-medium ' + colorClass;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 4000);
+}
+</script>
+
+{{end}}

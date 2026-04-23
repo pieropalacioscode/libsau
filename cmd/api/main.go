@@ -19,6 +19,7 @@ import (
 	"github.com/neocode96/libsau/internal/models"
 )
 
+// Servir archivos estáticos (CSS, JS)
 func main() {
 	// ── ENV ──
 	_ = godotenv.Load()
@@ -62,12 +63,20 @@ func main() {
 	categoryHandler := handlers.NewCategoryHandler(db)
 	authHandler := handlers.NewAuthHandler(db, rdb)
 	saleHandler := handlers.NewSaleHandler(db)
+	dashboardHandler := handlers.NewDashboardHandler(db)
+	searchHandler := handlers.NewSearchHandler(db)
+
 	// ── Router ──
 	r := chi.NewRouter()
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
+
+	//Templates
+	r.Get("/", handlers.PageHome)
+	r.Get("/pos", handlers.PagePOS)
+	r.Get("/dashboard", handlers.PageDashboard)
 
 	// ── HEALTH ──
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -98,9 +107,11 @@ func main() {
 		r.Route("/categories", func(r chi.Router) {
 			r.Get("/", categoryHandler.List)
 			r.Post("/", categoryHandler.Create)
+
 		})
 
 		r.Route("/products", func(r chi.Router) {
+			r.Get("/search", searchHandler.Search)
 			r.Get("/", productHandler.List)
 			r.Post("/", productHandler.Create)
 			r.Get("/{id}", productHandler.Get)
@@ -110,6 +121,8 @@ func main() {
 			r.Get("/", saleHandler.List)
 			r.Get("/{id}", saleHandler.Get)
 		})
+		r.With(auth.RequireRole("admin")).Get("/dashboard", dashboardHandler.Get)
+
 	})
 
 	// ── AUTH (correcto) ──
