@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -47,7 +48,10 @@ func respondError(w http.ResponseWriter, status int, msg string) {
 func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
 	var products []models.Product
 
-	if err := h.db.Preload("Category").Find(&products).Error; err != nil {
+	if err := h.db.
+		Where("active = ?", true).
+		Preload("Category").
+		Find(&products).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, "error obteniendo productos")
 		return
 	}
@@ -131,6 +135,162 @@ func (h *ProductHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, product)
+}
 
+type UpdateProductRequest struct {
+	Name       *string  `json:"name"`
+	Price      *float64 `json:"price"`
+	Cost       *float64 `json:"cost"`
+	CategoryID *uint    `json:"category_id"`
+}
+
+func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	var req UpdateProductRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+
+	var product models.Product
+	if err := h.db.First(&product, id).Error; err != nil {
+		respondError(w, http.StatusNotFound, "producto no encontrado")
+		return
+	}
+
+	updates := map[string]any{}
+
+	if req.Name != nil {
+		if *req.Name == "" {
+			respondError(w, http.StatusBadRequest, "name vacío")
+			return
+		}
+		updates["name"] = *req.Name
+	}
+
+	if req.Price != nil {
+		if *req.Price < 0 {
+			respondError(w, http.StatusBadRequest, "price inválido")
+			return
+		}
+		updates["price"] = *req.Price
+	}
+
+	if req.Cost != nil {
+		if *req.Cost < 0 {
+			respondError(w, http.StatusBadRequest, "cost inválido")
+			return
+		}
+		updates["cost"] = *req.Cost
+	}
+
+	if req.CategoryID != nil {
+		updates["category_id"] = *req.CategoryID
+	}
+
+	if len(updates) == 0 {
+		respondError(w, http.StatusBadRequest, "nada que actualizar")
+		return
+	}
+
+	h.db.Model(&product).Updates(updates)
+
+	h.db.Preload("Category").First(&product, product.ID)
+	respondJSON(w, http.StatusOK, product)
+}
+func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	var product models.Product
+
+	if err := h.db.First(&product, id).Error; err != nil {
+		respondError(w, http.StatusNotFound, "producto no encontrado")
+		return
+	}
+
+	if !product.Active {
+		respondError(w, http.StatusConflict, "ya está eliminado")
+		return
+	}
+
+	product.Active = false
+	h.db.Save(&product)
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message": "producto eliminado",
+	})
+
+}
+
+type AdjustStockRequest struct {
+	Tipo   string `json:"tipo"`
+	Amount int    `json:"amount"`
+	Reason string `json:"reason"`
+}
+
+func (h *ProductHandler) AdjustStock(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil || id <= 0 {
+		respondError(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	var req AdjustStockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+
+	if req.Amount <= 0 {
+		respondError(w, http.StatusBadRequest, "amount inválido")
+		return
+	}
+
+	if len(req.Reason) < 5 {
+		respondError(w, http.StatusBadRequest, "reason requerido")
+		return
+	}
+
+	var product models.Product
+
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&product, id).Error; err != nil {
+			return err
+		}
+
+		before := product.Stock
+		after := before
+
+		switch req.Tipo {
+		case "set":
+			after = req.Amount
+		case "add":
+			after = before + req.Amount
+		case "sub":
+			if before < req.Amount {
+				return fmt.Errorf("stock insuficiente")
+			}
+			after = before - req.Amount
+		default:
+			return fmt.Errorf("tipo inválido")
+		}
+
+		product.Stock = after
+
+		if err := tx.Save(&product).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.db.Preload("Category").First(&product, product.ID)
+
+	respondJSON(w, http.StatusOK, product)
 }

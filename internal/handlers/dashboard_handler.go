@@ -56,15 +56,6 @@ type LowStockItem struct {
 	Category string `json:"category"`
 }
 
-type RecentSale struct {
-	ID        uint      `json:"id"`
-	Total     float64   `json:"total"`
-	PayMethod string    `json:"pay_method"`
-	ItemCount int       `json:"item_count"`
-	Seller    string    `json:"seller"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 // ─── Structs para queries raw ─────────────────────────────────────────────────
 
 type payMethodRow struct {
@@ -76,15 +67,6 @@ type dailyTotalsRow struct {
 	TotalSales   int64
 	TotalRevenue float64
 	TotalProfit  float64
-}
-
-type recentSaleRow struct {
-	ID        uint
-	Total     float64
-	PayMethod string
-	ItemCount int
-	Seller    string
-	CreatedAt time.Time
 }
 
 // ─── GET /api/v1/dashboard ────────────────────────────────────────────────────

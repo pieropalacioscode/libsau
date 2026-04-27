@@ -42,6 +42,7 @@ func main() {
 		&models.User{},
 		&models.Sale{},
 		&models.SaleItem{},
+		&models.CashClose{},
 	)
 	if err != nil {
 		log.Fatal("❌ Error en AutoMigrate:", err)
@@ -65,6 +66,7 @@ func main() {
 	saleHandler := handlers.NewSaleHandler(db)
 	dashboardHandler := handlers.NewDashboardHandler(db)
 	searchHandler := handlers.NewSearchHandler(db)
+	cashHandler := handlers.NewCashHandler(db)
 
 	// ── Router ──
 	r := chi.NewRouter()
@@ -109,12 +111,15 @@ func main() {
 			r.Post("/", categoryHandler.Create)
 
 		})
-
 		r.Route("/products", func(r chi.Router) {
 			r.Get("/search", searchHandler.Search)
 			r.Get("/", productHandler.List)
-			r.Post("/", productHandler.Create)
 			r.Get("/{id}", productHandler.Get)
+
+			r.With(auth.RequireRole("admin")).Post("/", productHandler.Create)
+			r.With(auth.RequireRole("admin")).Patch("/{id}", productHandler.Update)
+			r.With(auth.RequireRole("admin")).Patch("/{id}/stock", productHandler.AdjustStock)
+			r.With(auth.RequireRole("admin")).Delete("/{id}", productHandler.Delete)
 		})
 		r.Route("/sales", func(r chi.Router) {
 			r.Post("/", saleHandler.Create)
@@ -123,6 +128,11 @@ func main() {
 		})
 		r.With(auth.RequireRole("admin")).Get("/dashboard", dashboardHandler.Get)
 
+		r.Route("/cash", func(r chi.Router) {
+			r.With(auth.RequireRole("admin", "vendedor")).Get("/today", cashHandler.Today)
+			r.With(auth.RequireRole("admin")).Post("/close", cashHandler.Close)
+			r.With(auth.RequireRole("admin")).Get("/history", cashHandler.History)
+		})
 	})
 
 	// ── AUTH (correcto) ──
