@@ -29,3 +29,5 @@ cookies.txt
 
 # Coverage (tests)
 coverage.out
+#tailwind
+node_modules/

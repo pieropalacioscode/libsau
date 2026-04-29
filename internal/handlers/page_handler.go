@@ -3,46 +3,64 @@ package handlers
 import (
 	"html/template"
 	"net/http"
+	"os"
 	"path/filepath"
-	"runtime"
 )
 
-// baseDir resuelve la ruta raíz del proyecto para encontrar templates.
-// Funciona tanto desde go run como desde el binario compilado.
-func baseDir() string {
-	_, filename, _, _ := runtime.Caller(0)
-	// filename = .../internal/handlers/page_handler.go
-	// subimos 3 niveles: handlers → internal → proyecto
-	return filepath.Join(filepath.Dir(filename), "..", "..")
+func tmplDir() string {
+	// Busca templates desde el directorio de trabajo actual
+	wd, _ := os.Getwd()
+	return filepath.Join(wd, "templates")
 }
 
-func renderTemplate(w http.ResponseWriter, name string, data any) {
-	base := baseDir()
-	tmpl, err := template.ParseFiles(
-		filepath.Join(base, "templates", "layout.html"),
-		filepath.Join(base, "templates", name),
-	)
+func render(w http.ResponseWriter, r *http.Request, page string, data any) {
+	base := tmplDir()
+	files := []string{
+		filepath.Join(base, "layout.html"),
+		filepath.Join(base, page),
+	}
+	tmpl, err := template.ParseFiles(files...)
 	if err != nil {
-		http.Error(w, "Error cargando template: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Template error: "+err.Error(), 500)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
-		http.Error(w, "Error renderizando: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Render error: "+err.Error(), 500)
 	}
 }
 
-// GET / → redirige al POS
+func renderLogin(w http.ResponseWriter, r *http.Request) {
+	base := tmplDir()
+	tmpl, err := template.ParseFiles(filepath.Join(base, "login.html"))
+	if err != nil {
+		http.Error(w, "Template error: "+err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	tmpl.Execute(w, nil)
+}
+
 func PageHome(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/pos", http.StatusFound)
 }
 
-// GET /pos → pantalla principal de ventas
-func PagePOS(w http.ResponseWriter, r *http.Request) {
-	renderTemplate(w, "pos/index.html", nil)
+func PageLogin(w http.ResponseWriter, r *http.Request) {
+	renderLogin(w, r)
 }
 
-// GET /dashboard → métricas del día
-func PageDashboard(w http.ResponseWriter, r *http.Request) {
-	renderTemplate(w, "dashboard/index.html", nil)
+func PagePOS(w http.ResponseWriter, r *http.Request) {
+	render(w, r, "pos/index.html", map[string]string{"Title": "Punto de Venta"})
+}
+
+// func PageDashboard(w http.ResponseWriter, r *http.Request) {
+// 	render(w, r, "dashboard/index.html", map[string]string{"Title": "Dashboard"})
+// }
+
+func PageCash(w http.ResponseWriter, r *http.Request) {
+	render(w, r, "cash/index.html", map[string]string{"Title": "Cierre de Caja"})
+}
+
+func PageProducts(w http.ResponseWriter, r *http.Request) {
+	render(w, r, "products/index.html", map[string]string{"Title": "Productos"})
 }

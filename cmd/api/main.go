@@ -74,12 +74,9 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
-
-	//Templates
-	r.Get("/", handlers.PageHome)
-	r.Get("/pos", handlers.PagePOS)
-	r.Get("/dashboard", handlers.PageDashboard)
-
+	// ── STATIC FILES ──
+	fs := http.FileServer(http.Dir("./static"))
+	r.Handle("/static/*", http.StripPrefix("/static/", fs))
 	// ── HEALTH ──
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		status := map[string]string{"status": "ok"}
@@ -102,15 +99,24 @@ func main() {
 		json.NewEncoder(w).Encode(status)
 	})
 
-	// ── API PRIVADA ──
+	// ── PÁGINAS (UI / HTML) ──
+	// El JWT lo verifica el frontend (JS) para decidir si te patea al login o no A FUTURO PROTEGERLAS.
+	r.Get("/login", handlers.PageLogin)
+	r.Get("/", handlers.PageHome)
+	r.Get("/pos", handlers.PagePOS)
+	// r.Get("/dashboard", handlers.PageDashboard)
+	r.Get("/cash", handlers.PageCash)
+	r.Get("/products", handlers.PageProducts)
+
+	// ── API PRIVADA (SOLO JSON) ──
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(auth.Authenticate)
 
 		r.Route("/categories", func(r chi.Router) {
 			r.Get("/", categoryHandler.List)
 			r.Post("/", categoryHandler.Create)
-
 		})
+
 		r.Route("/products", func(r chi.Router) {
 			r.Get("/search", searchHandler.Search)
 			r.Get("/", productHandler.List)
@@ -121,11 +127,14 @@ func main() {
 			r.With(auth.RequireRole("admin")).Patch("/{id}/stock", productHandler.AdjustStock)
 			r.With(auth.RequireRole("admin")).Delete("/{id}", productHandler.Delete)
 		})
+
 		r.Route("/sales", func(r chi.Router) {
 			r.Post("/", saleHandler.Create)
 			r.Get("/", saleHandler.List)
 			r.Get("/{id}", saleHandler.Get)
 		})
+
+		// JSON de métricas para el dashboard
 		r.With(auth.RequireRole("admin")).Get("/dashboard", dashboardHandler.Get)
 
 		r.Route("/cash", func(r chi.Router) {
@@ -133,9 +142,11 @@ func main() {
 			r.With(auth.RequireRole("admin")).Post("/close", cashHandler.Close)
 			r.With(auth.RequireRole("admin")).Get("/history", cashHandler.History)
 		})
+
+		// ❌ AQUÍ ESTABAN TUS RUTAS DE PÁGINAS DUPLICADAS. LAS HE ELIMINADO.
 	})
 
-	// ── AUTH (correcto) ──
+	// ── AUTH ──
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/login", authHandler.Login)
 		r.Post("/refresh", authHandler.Refresh)

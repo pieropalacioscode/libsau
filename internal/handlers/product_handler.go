@@ -135,6 +135,8 @@ func (h *ProductHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Se añadió la respuesta exitosa que faltaba
+	respondJSON(w, http.StatusOK, product)
 }
 
 type UpdateProductRequest struct {
@@ -194,11 +196,14 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Se removió el json.NewEncoder huérfano que causaba el error undefined
+
 	h.db.Model(&product).Updates(updates)
 
 	h.db.Preload("Category").First(&product, product.ID)
 	respondJSON(w, http.StatusOK, product)
 }
+
 func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 
@@ -220,7 +225,6 @@ func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{
 		"message": "producto eliminado",
 	})
-
 }
 
 type AdjustStockRequest struct {
@@ -251,6 +255,8 @@ func (h *ProductHandler) AdjustStock(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "reason requerido")
 		return
 	}
+
+	// Se removió el json.NewEncoder huérfano que causaba el error undefined
 
 	var product models.Product
 
