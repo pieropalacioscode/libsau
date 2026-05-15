@@ -72,7 +72,7 @@ if (window.location.pathname === "/products") {
 }
 
 async function loadProducts() {
-  const token = localStorage.getItem('token');
+  const token = sessionStorage.getItem('access_token');
 
   if (!token) {
     window.location.href = '/login';
@@ -81,18 +81,15 @@ async function loadProducts() {
 
   const res = await api('GET', '/api/v1/products');
 
-  console.log("RES PRODUCTS:", res);
-
-  // 🔥 nuevo manejo
   if (!res || res.error) {
-    console.error("Error cargando productos");
+    console.error('Error cargando productos');
     return;
   }
 
-  allProducts = res.data; // ✅ CLAVE
+  allProducts = res.data || [];
+
   renderTable(allProducts);
 }
-
 function filterProducts(q) {
   const query = q.toLowerCase();
 
@@ -202,5 +199,14 @@ async function submitStockAdj() {
 function openCreateModal() {
   toast('Módulo en desarrollo', 'info');
 }
+document.addEventListener('DOMContentLoaded', () => {
+  const token = sessionStorage.getItem('access_token');
+
+  if (!token) {
+    window.location.href = '/login';
+    return;
+  }
+});
 </script>
+
 {{end}}

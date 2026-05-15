@@ -9,20 +9,20 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/joho/godotenv"
-	"github.com/redis/go-redis/v9"
-
+	chimiddleware "github.com/go-chi/chi/v5/middleware" // ← alias aquí
 	"github.com/neocode96/libsau/internal/auth"
+	"github.com/neocode96/libsau/internal/config"
 	"github.com/neocode96/libsau/internal/database"
-	"github.com/neocode96/libsau/internal/handlers"
+	"github.com/neocode96/libsau/internal/handlers" // ← alias aquí
+	"github.com/neocode96/libsau/internal/middleware"
 	"github.com/neocode96/libsau/internal/models"
+	"github.com/redis/go-redis/v9"
 )
 
 // Servir archivos estáticos (CSS, JS)
 func main() {
-	// ── ENV ──
-	_ = godotenv.Load()
+	config.Load()
+	// YA NO NECESITAS :godotenv.Load()
 
 	port := os.Getenv("APP_PORT")
 	if port == "" {
@@ -71,9 +71,9 @@ func main() {
 	// ── Router ──
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(chimiddleware.Logger)
+	r.Use(chimiddleware.Recoverer)
+	r.Use(chimiddleware.Timeout(60 * time.Second))
 	// ── STATIC FILES ──
 	fs := http.FileServer(http.Dir("./static"))
 	r.Handle("/static/*", http.StripPrefix("/static/", fs))
@@ -103,10 +103,9 @@ func main() {
 	// El JWT lo verifica el frontend (JS) para decidir si te patea al login o no A FUTURO PROTEGERLAS.
 	r.Get("/login", handlers.PageLogin)
 	r.Get("/", handlers.PageHome)
-	r.Get("/pos", handlers.PagePOS)
-	// r.Get("/dashboard", handlers.PageDashboard)
-	r.Get("/cash", handlers.PageCash)
-	r.Get("/products", handlers.PageProducts)
+	r.With(middleware.RequirePageAuth).Get("/pos", handlers.PagePOS)
+	r.With(middleware.RequirePageAuth).Get("/cash", handlers.PageCash)
+	r.With(middleware.RequirePageAuth).Get("/products", handlers.PageProducts)
 
 	// ── API PRIVADA (SOLO JSON) ──
 	r.Route("/api/v1", func(r chi.Router) {

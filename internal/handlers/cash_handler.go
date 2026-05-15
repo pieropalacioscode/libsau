@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -137,9 +138,22 @@ func (h *CashHandler) Close(w http.ResponseWriter, r *http.Request) {
 	date := start.Format("2006-01-02")
 
 	var existing models.CashClose
-	if h.db.Where("date = ?", date).First(&existing).Error == nil {
-		respondError(w, http.StatusConflict,
-			"la caja del "+date+" ya fue cerrada. Diferencia: "+formatMoney(existing.Difference))
+	err := h.db.Where("date = ?", date).First(&existing).Error
+
+	if err == nil {
+
+		respondError(
+			w,
+			http.StatusConflict,
+			"la caja del "+date+" ya fue cerrada",
+		)
+
+		return
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+
+		respondError(w, http.StatusInternalServerError, "error verificando cierre")
 		return
 	}
 
@@ -162,7 +176,10 @@ func (h *CashHandler) Close(w http.ResponseWriter, r *http.Request) {
 	difference := req.CashDeclared - row.Cash
 
 	var user models.User
-	h.db.First(&user, claims.UserID)
+	if err := h.db.First(&user, claims.UserID).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "usuario no encontrado")
+		return
+	}
 
 	cashClose := models.CashClose{
 		Date:         date,

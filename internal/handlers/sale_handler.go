@@ -191,7 +191,7 @@ func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
 			UserID:    claims.UserID,
 			Origin:    "LOCAL",
 			PayMethod: req.PayMethod,
-			Status:    "COMPLETED",
+			Status:    models.SaleStatusCompleted,
 			Total:     totalVenta,
 			Notes:     req.Notes,
 			Items:     saleItems,

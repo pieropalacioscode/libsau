@@ -51,11 +51,43 @@
   </div>
 
 <script>
-if (localStorage.getItem('token')) {
-window.location.href = '/dashboard';
-}
 document.getElementById('email').focus();
 
+// si ya hay sesión → entrar directo
+(async function checkSession() {
+
+  const token = sessionStorage.getItem('access_token');
+
+  // no hay sesión frontend
+  if (!token) return;
+
+  try {
+
+    // validar sesión REAL con backend
+    const res = await fetch('/auth/me', {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    // token válido
+    if (res.ok) {
+      window.location.href = '/pos';
+      return;
+    }
+
+  } catch(e) {
+    console.warn(e);
+  }
+
+  // sesión inválida → limpiar TODO
+  sessionStorage.removeItem('access_token');
+  sessionStorage.removeItem('current_user');
+
+  document.cookie =
+    'access_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
+
+})();
 async function login() {
   const email    = document.getElementById('email').value.trim();
   const password = document.getElementById('password').value;
@@ -70,6 +102,7 @@ async function login() {
 
   btn.textContent = 'Ingresando...';
   btn.disabled = true;
+  errEl.classList.add('hidden');
 
   try {
     const res = await fetch('/auth/login', {
@@ -80,30 +113,27 @@ async function login() {
 
     const data = await res.json();
 
-    if (!res.ok) {
+    if (!res.ok || !data.access_token) {
       errEl.textContent = data.error || 'Credenciales incorrectas';
       errEl.classList.remove('hidden');
-      btn.textContent = 'Iniciar Sesión';
-      btn.disabled = false;
       return;
     }
 
-    // 🔥 FIX CLAVE
-    localStorage.setItem('token', data.access_token);
+    // ✅ usar mismo sistema que layout
+    sessionStorage.setItem('access_token', data.access_token);
+    sessionStorage.setItem('current_user', JSON.stringify(data.user || {}));
 
-    // opcional: evento global (para HTMX / listeners)
-    document.dispatchEvent(new Event('auth:login'));
-
-    // redirección inteligente
-    window.location.href = '/dashboard';
+    // 🚀 REDIRECCIÓN REAL
+    window.location.href = '/pos';
 
   } catch(e) {
     errEl.textContent = 'Error de conexión';
     errEl.classList.remove('hidden');
+  } finally {
     btn.textContent = 'Iniciar Sesión';
     btn.disabled = false;
   }
 }
 </script>
-</body>
-</html>
+<!-- </body>
+</html> -->

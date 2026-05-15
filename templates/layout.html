@@ -71,37 +71,6 @@
 
   </div>
 
-  <div id="login-overlay"
-    class="fixed inset-0 bg-gray-900 bg-opacity-80 backdrop-blur-sm flex items-center justify-center z-50 hidden">
-    <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4">
-      <div class="text-center mb-8">
-        <span class="text-5xl">📚</span>
-        <h2 class="text-gray-800 font-bold text-xl mt-3">Librería Saber</h2>
-        <p class="text-gray-500 text-sm mt-1">Inicia sesión para continuar</p>
-      </div>
-      <div class="space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-gray-700 mb-1">Email</label>
-          <input id="login-email" type="email" placeholder="admin@libreriasaber.com"
-            class="input-base"
-            onkeydown="if(event.key==='Enter') document.getElementById('login-password').focus()">
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-gray-700 mb-1">Contraseña</label>
-          <input id="login-password" type="password" placeholder="••••••••"
-            class="input-base"
-            onkeydown="if(event.key==='Enter') doLogin()">
-        </div>
-        <p id="login-error" class="text-danger-600 text-xs text-center hidden"></p>
-        <button onclick="doLogin()" id="login-btn"
-          class="w-full btn-primary py-3 text-base">
-          Iniciar Sesión
-        </button>
-      </div>
-      <p class="text-center text-xs text-gray-400 mt-6">v1.0 · Sistema de Ventas</p>
-    </div>
-  </div>
-
   <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2"></div>
   <script src="/static/js/api.js"></script>
 
@@ -119,18 +88,18 @@
   };
 
   // ── Verificar token al cargar ──────────────────────────────────────────────
-  document.addEventListener('DOMContentLoaded', function() {
-    updateClock();
-    setInterval(updateClock, 1000);
-    setActivePage();
+  // document.addEventListener('DOMContentLoaded', function() {
+  //   updateClock();
+  //   setInterval(updateClock, 1000);
+  //   setActivePage();
 
-    const token = Auth.getToken();
-    if (!token) {
-      showLoginOverlay();
-    } else {
-      loadUserInfo();
-    }
-  });
+  //   const token = Auth.getToken();
+  //   if (!token) {
+  //     showLoginOverlay();
+  //   } else {
+  //     loadUserInfo();
+  //   }
+  // });
 
   function setActivePage() {
     const path = window.location.pathname;
@@ -170,72 +139,97 @@
       });
     }
   }
+  
+  document.addEventListener("DOMContentLoaded", () => {
+  const path = window.location.pathname;
 
-  // ── Login ──────────────────────────────────────────────────────────────────
-  function showLoginOverlay() {
-    document.getElementById('login-overlay').classList.remove('hidden');
-    setTimeout(() => document.getElementById('login-email').focus(), 100);
+  // permitir login sin token
+  if (path === "/login") return;
+
+  // proteger todo lo demás
+  if (!Auth.getToken()) {
+    window.location = "/login";
+    return;
   }
 
-  async function doLogin() {
-    const email    = document.getElementById('login-email').value.trim();
-    const password = document.getElementById('login-password').value;
-    const errEl    = document.getElementById('login-error');
-    const btn      = document.getElementById('login-btn');
+  // inicialización normal
+  updateClock();
+  setInterval(updateClock, 1000);
+  setActivePage();
+  loadUserInfo();
+  });
 
-    if (!email || !password) {
-      errEl.textContent = 'Completa todos los campos';
+  // ── Login ──────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const email    = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl    = document.getElementById('login-error');
+  const btn      = document.getElementById('login-btn');
+
+  if (!email || !password) {
+    errEl.textContent = 'Completa todos los campos';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  btn.textContent = 'Ingresando...';
+  btn.disabled = true;
+  errEl.classList.add('hidden');
+
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.access_token) {
+      errEl.textContent = data.error || 'Credenciales incorrectas';
       errEl.classList.remove('hidden');
       return;
     }
 
-    btn.textContent = 'Ingresando...';
-    btn.disabled = true;
-    errEl.classList.add('hidden');
+    // ✅ guardar sesión
+    Auth.setToken(data.access_token);
+    Auth.setUser(data.user || {});
 
-    try {
-      const res  = await fetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
+    // 💣 AQUÍ ESTÁ LA CLAVE
+    window.location = "/pos";
 
-      if (!res.ok) {
-        errEl.textContent = data.error || 'Credenciales incorrectas';
-        errEl.classList.remove('hidden');
-        return;
-      }
-
-      Auth.setToken(data.access_token);
-      Auth.setUser(data.user || {});
-      document.getElementById('login-overlay').classList.add('hidden');
-      loadUserInfo();
-      toast('Bienvenido al sistema', 'success');
-      document.dispatchEvent(new CustomEvent('auth:login'));
-
-    } catch (_err) { 
-      errEl.textContent = 'Error de conexión con el servidor';
-      errEl.classList.remove('hidden');
-    } finally {
-      btn.textContent = 'Iniciar Sesión';
-      btn.disabled = false;
-    }
+  } catch (_err) {
+    errEl.textContent = 'Error de conexión con el servidor';
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.textContent = 'Iniciar Sesión';
+    btn.disabled = false;
   }
+}
 
   // ── Logout ─────────────────────────────────────────────────────────────────
-  async function logout() {
-    const token = Auth.getToken();
+async function logout() {
+
+  const token = sessionStorage.getItem('access_token');
+
+  try {
     if (token) {
       await fetch('/auth/logout', {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token },
-      }).catch((_err) => { /* ignorar error si falla la red en el logout */ }); 
+        headers: {
+          Authorization: 'Bearer ' + token
+        }
+      });
     }
-    Auth.clear();
-    showLoginOverlay();
+  } catch (e) {
+    console.warn(e);
   }
 
+  sessionStorage.removeItem('access_token');
+  sessionStorage.removeItem('current_user');
+
+  window.location.href = '/login';
+}
   // ── Cargar info del usuario en el sidebar ──────────────────────────────────
   async function loadUserInfo() {
     const token = Auth.getToken();

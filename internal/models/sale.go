@@ -6,18 +6,30 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	SaleStatusPending   = "PENDING"
+	SaleStatusConfirmed = "CONFIRMED"
+	SaleStatusPreparing = "PREPARING"
+	SaleStatusShipped   = "SHIPPED"
+	SaleStatusDelivered = "DELIVERED"
+	SaleStatusCompleted = "COMPLETED"
+	SaleStatusCancelled = "CANCELLED"
+	SaleStatusRejected  = "REJECTED"
+)
+
 // Sale — Cabecera de venta. LOCAL o WOO. Cliente nullable = venta anónima.
 type Sale struct {
-	ID        uint           `gorm:"primaryKey;autoIncrement"                    json:"id"`
-	UserID    uint           `gorm:"not null;index"                              json:"user_id"`
-	Origin    string         `gorm:"type:varchar(10);not null;default:'LOCAL'"   json:"origin"`
-	PayMethod string         `gorm:"type:varchar(20);not null"                   json:"pay_method"`
-	Status    string         `gorm:"type:varchar(25);not null;default:'COMPLETED'" json:"status"`
-	Total     float64        `gorm:"type:numeric(10,2);not null;default:0"       json:"total"`
-	Notes     *string        `gorm:"type:varchar(300)"                           json:"notes,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index"                                       json:"-"`
+	ID         uint           `gorm:"primaryKey;autoIncrement"                    json:"id"`
+	UserID     uint           `gorm:"not null;index"                              json:"user_id"`
+	Origin     string         `gorm:"type:varchar(10);not null;default:'LOCAL'"   json:"origin"`
+	ExternalID *string        `gorm:"uniqueIndex" json:"external_id,omitempty"`
+	PayMethod  string         `gorm:"type:varchar(20);not null"                   json:"pay_method"`
+	Status     string         `gorm:"type:varchar(25);not null;default:'PENDING'" json:"status"`
+	Total      float64        `gorm:"type:numeric(10,2);not null;default:0"       json:"total"`
+	Notes      *string        `gorm:"type:varchar(300)"                           json:"notes,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index"                                       json:"-"`
 
 	// Relaciones (solo para Preload, no crean columnas)
 	User  User       `gorm:"foreignKey:UserID"  json:"user,omitempty"`

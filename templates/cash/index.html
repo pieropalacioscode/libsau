@@ -258,5 +258,13 @@ async function submitClose() {
   alert('Caja cerrada correctamente');
   await init();
 }
+document.addEventListener('DOMContentLoaded', () => {
+  const token = sessionStorage.getItem('access_token');
+
+  if (!token) {
+    window.location.href = '/login';
+    return;
+  }
+});
 </script>
 {{end}}

@@ -2,10 +2,11 @@ package auth
 
 import (
 	"errors"
-	"os"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/neocode96/libsau/internal/config"
 )
 
 type Claims struct {
@@ -16,13 +17,7 @@ type Claims struct {
 }
 
 // 🔥 PROTECCIÓN: nunca permitir secret vacío
-var secret = func() []byte {
-	s := os.Getenv("JWT_SECRET")
-	if s == "" {
-		panic("JWT_SECRET no está definido")
-	}
-	return []byte(s)
-}()
+var secret = []byte(config.JWTSecret)
 
 var ErrTokenExpired = errors.New("token expirado")
 
@@ -45,11 +40,14 @@ func GenerateAccessToken(userID uint, email, role string) (string, error) {
 
 // ───── VALIDAR ACCESS TOKEN ─────
 func ValidateAccessToken(tokenStr string) (*Claims, error) {
+
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
-		// 🔒 Validar método de firma
+
+		// 🔒 evitar ataques de algoritmo
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("método de firma inválido")
 		}
+
 		return secret, nil
 	})
 
@@ -65,5 +63,71 @@ func ValidateAccessToken(tokenStr string) (*Claims, error) {
 		return nil, errors.New("token inválido")
 	}
 
+	// 🔥 VALIDACIONES EXTRA (IMPORTANTE)
+	if claims.Issuer != "libsau" {
+		return nil, errors.New("issuer inválido")
+	}
+
 	return claims, nil
+}
+func GenerateRefreshToken(userID uint) (string, error) {
+
+	claims := jwt.RegisteredClaims{
+		Subject:   fmt.Sprintf("%d", userID),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		Issuer:    "libsau",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	return token.SignedString(secret)
+}
+
+func ValidateRefreshToken(tokenStr string) (*jwt.RegisteredClaims, error) {
+
+	token, err := jwt.ParseWithClaims(
+		tokenStr,
+		&jwt.RegisteredClaims{},
+		func(t *jwt.Token) (any, error) {
+
+			// 🔒 seguridad algoritmo
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("invalid signing method")
+			}
+
+			return secret, nil
+		},
+	)
+
+	if err != nil {
+		return nil, errors.New("refresh token inválido")
+	}
+
+	claims, ok := token.Claims.(*jwt.RegisteredClaims)
+	if !ok || !token.Valid {
+		return nil, errors.New("refresh token inválido")
+	}
+
+	// 🔥 VALIDACIONES CRÍTICAS
+	if claims.Issuer != "libsau" {
+		return nil, errors.New("issuer inválido")
+	}
+
+	if claims.Subject == "" {
+		return nil, errors.New("subject inválido")
+	}
+
+	return claims, nil
+}
+func ExtractUserIDFromRefresh(claims *jwt.RegisteredClaims) (uint, error) {
+
+	var userID uint
+	_, err := fmt.Sscanf(claims.Subject, "%d", &userID)
+
+	if err != nil || userID == 0 {
+		return 0, errors.New("userID inválido")
+	}
+
+	return userID, nil
 }

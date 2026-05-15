@@ -3,13 +3,7 @@
 <!-- ── Navbar ────────────────────────────────────────────────────────────── -->
 <nav class="bg-blue-700 text-white px-6 py-3 flex justify-between items-center shadow-md">
   <span class="font-bold text-lg tracking-wide">📚 Librería Saber · POS</span>
-  <div class="flex gap-4 items-center text-sm">
-    <a href="/dashboard" class="hover:text-blue-200 transition">📊 Dashboard</a>
-    <button onclick="logout()"
-      class="bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded transition">
-      🚪 Salir
-    </button>
-  </div>
+
 </nav>
 
 <!-- ── Layout principal: 2 columnas ─────────────────────────────────────── -->
@@ -113,24 +107,11 @@
 </div>
 
 <!-- ── Modal de login (si no hay token) ─────────────────────────────────── -->
-<div id="login-modal"
+<!-- <div id="login-modal"
   class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 hidden">
-  <div class="bg-white rounded-xl shadow-2xl p-8 w-80">
-    <h2 class="font-bold text-xl mb-6 text-center text-gray-800">
-      📚 Librería Saber
-    </h2>
-    <input id="login-email" type="email" placeholder="Email"
-      class="w-full border rounded-lg px-4 py-2 mb-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-    <input id="login-password" type="password" placeholder="Contraseña"
-      class="w-full border rounded-lg px-4 py-2 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-      onkeydown="if(event.key==='Enter') doLogin()">
-    <button onclick="doLogin()"
-      class="w-full bg-blue-700 text-white py-2 rounded-lg font-bold hover:bg-blue-600 transition">
-      Entrar
-    </button>
-    <p id="login-error" class="text-red-500 text-xs mt-3 text-center hidden"></p>
-  </div>
-</div>
+  ...
+  ...
+</div> -->
 
 <script>
 // ── Estado del carrito (en memoria, no en localStorage) ────────────────────
@@ -140,66 +121,13 @@ const cart = { items: [], payMethod: 'EFECTIVO' };
 document.addEventListener('DOMContentLoaded', function() {
   const token = sessionStorage.getItem('access_token');
   if (!token) {
-    document.getElementById('login-modal').classList.remove('hidden');
+    window.location.href = '/login';
   }
   // Foco automático en el campo de búsqueda
   document.getElementById('search-input').focus();
 });
-//login
-async function doLogin() {
-  const email    = document.getElementById('login-email').value;
-  const password = document.getElementById('login-password').value;
-  const errEl    = document.getElementById('login-error');
 
-  try {
-    const res = await fetch('/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
 
-    const data = await res.json();
-    console.log("LOGIN RESPONSE:", data); // 🔥 DEBUG
-
-    if (!res.ok) {
-      errEl.textContent = data.error || 'Error al iniciar sesión';
-      errEl.classList.remove('hidden');
-      return;
-    }
-
-    if (!data.access_token) {
-      errEl.textContent = 'No se recibió token';
-      errEl.classList.remove('hidden');
-      return;
-    }
-
-    sessionStorage.setItem('access_token', data.access_token);
-
-    console.log("TOKEN GUARDADO:", data.access_token); // 🔥 DEBUG
-
-    document.getElementById('login-modal').classList.add('hidden');
-    document.getElementById('search-input').focus();
-
-  } catch(e) {
-    console.error("LOGIN ERROR:", e);
-    errEl.textContent = 'Error de conexión';
-    errEl.classList.remove('hidden');
-  }
-}
-// ── Logout ─────────────────────────────────────────────────────────────────
-async function logout() {
-  const token = sessionStorage.getItem('access_token');
-  if (token) {
-    await fetch('/auth/logout', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token }
-    });
-  }
-  sessionStorage.removeItem('access_token');
-  document.getElementById('login-modal').classList.remove('hidden');
-}
-
-// ── Agregar producto al carrito ────────────────────────────────────────────
 function addToCart(id, name, sku, price, stock) {
   if (stock <= 0) {
     beepError();
@@ -321,8 +249,8 @@ async function confirmSale() {
 
   const token = sessionStorage.getItem('access_token');
   if (!token) {
-    document.getElementById('login-modal').classList.remove('hidden');
-    return;
+  window.location.href = '/login';  
+  return;
   }
 
   // Deshabilitar botón durante el request
@@ -401,6 +329,14 @@ function showSaleResult(msg, colorClass) {
   el.classList.remove('hidden');
   setTimeout(() => el.classList.add('hidden'), 4000);
 }
+document.addEventListener('DOMContentLoaded', () => {
+  const token = sessionStorage.getItem('access_token');
+
+  if (!token) {
+    window.location.href = '/login';
+    return;
+  }
+});
 </script>
 
 {{end}}
