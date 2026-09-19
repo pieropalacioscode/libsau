@@ -9,75 +9,85 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware" // ← alias aquí
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/neocode96/libsau/internal/auth"
 	"github.com/neocode96/libsau/internal/config"
 	"github.com/neocode96/libsau/internal/database"
-	"github.com/neocode96/libsau/internal/handlers" // ← alias aquí
+	"github.com/neocode96/libsau/internal/handlers"
 	"github.com/neocode96/libsau/internal/middleware"
 	"github.com/neocode96/libsau/internal/models"
+	"github.com/neocode96/libsau/internal/webhook"
 	"github.com/redis/go-redis/v9"
 )
 
-// Servir archivos estáticos (CSS, JS)
 func main() {
+	// ── Config ────────────────────────────────────────────────────
 	config.Load()
-	// YA NO NECESITAS :godotenv.Load()
 
 	port := os.Getenv("APP_PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// ── DB ──
+	// ── Base de datos ──────────────────────────────────────────────
 	db, err := database.Connect()
 	if err != nil {
 		log.Fatal("❌ Error conectando a DB:", err)
 	}
 
 	log.Println("🔄 Ejecutando migraciones...")
-	err = db.AutoMigrate(
+	if err = db.AutoMigrate(
 		&models.Category{},
 		&models.Product{},
 		&models.User{},
 		&models.Sale{},
 		&models.SaleItem{},
 		&models.CashClose{},
-	)
-	if err != nil {
+	); err != nil {
 		log.Fatal("❌ Error en AutoMigrate:", err)
 	}
+	log.Println("✅ Migraciones completadas")
 
-	// ── Redis ──
+	// ── Redis ──────────────────────────────────────────────────────
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
 		Password: os.Getenv("REDIS_PASSWORD"),
 	})
-
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		log.Fatal("❌ Redis no conectado:", err)
 	}
 	log.Println("✅ Redis conectado")
 
-	// ── Handlers ──
-	productHandler := handlers.NewProductHandler(db)
-	categoryHandler := handlers.NewCategoryHandler(db)
+	// ── Handlers ───────────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(db, rdb)
+	categoryHandler := handlers.NewCategoryHandler(db)
+	productHandler := handlers.NewProductHandler(db)
 	saleHandler := handlers.NewSaleHandler(db)
 	dashboardHandler := handlers.NewDashboardHandler(db)
 	searchHandler := handlers.NewSearchHandler(db)
 	cashHandler := handlers.NewCashHandler(db)
 
-	// ── Router ──
-	r := chi.NewRouter()
+	// ── Webhook WooCommerce ────────────────────────────────────────
+	wooHandler := webhook.NewWooWebhookHandler(db, rdb)
+	wooWorker := webhook.NewWooWorker(db, rdb)
+	wooConfirmHandler := handlers.NewWooConfirmHandler(db, wooWorker)
 
+	// Worker en background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go wooWorker.Run(ctx)
+
+	// ── Router ─────────────────────────────────────────────────────
+	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(60 * time.Second))
-	// ── STATIC FILES ──
+
+	// ── Archivos estáticos ─────────────────────────────────────────
 	fs := http.FileServer(http.Dir("./static"))
 	r.Handle("/static/*", http.StripPrefix("/static/", fs))
-	// ── HEALTH ──
+
+	// ── Health check ───────────────────────────────────────────────
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		status := map[string]string{"status": "ok"}
 
@@ -99,23 +109,35 @@ func main() {
 		json.NewEncoder(w).Encode(status)
 	})
 
-	// ── PÁGINAS (UI / HTML) ──
-	// El JWT lo verifica el frontend (JS) para decidir si te patea al login o no A FUTURO PROTEGERLAS.
+	// ── Páginas HTML ───────────────────────────────────────────────
 	r.Get("/login", handlers.PageLogin)
 	r.Get("/", handlers.PageHome)
 	r.With(middleware.RequirePageAuth).Get("/pos", handlers.PagePOS)
 	r.With(middleware.RequirePageAuth).Get("/cash", handlers.PageCash)
 	r.With(middleware.RequirePageAuth).Get("/products", handlers.PageProducts)
 
-	// ── API PRIVADA (SOLO JSON) ──
+	// ── Webhook WooCommerce (PÚBLICO — sin JWT) ────────────────────
+	r.Post("/webhooks/woocommerce", wooHandler.Handle)
+
+	// ── Auth ───────────────────────────────────────────────────────
+	r.Route("/auth", func(r chi.Router) {
+		r.Post("/login", authHandler.Login)
+		r.Post("/refresh", authHandler.Refresh)
+		r.With(auth.Authenticate).Post("/logout", authHandler.Logout)
+		r.With(auth.Authenticate).Get("/me", authHandler.Me)
+	})
+
+	// ── API privada (JWT requerido) ────────────────────────────────
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(auth.Authenticate)
 
+		// Categorías
 		r.Route("/categories", func(r chi.Router) {
 			r.Get("/", categoryHandler.List)
 			r.Post("/", categoryHandler.Create)
 		})
 
+		// Productos
 		r.Route("/products", func(r chi.Router) {
 			r.Get("/search", searchHandler.Search)
 			r.Get("/", productHandler.List)
@@ -127,35 +149,27 @@ func main() {
 			r.With(auth.RequireRole("admin")).Delete("/{id}", productHandler.Delete)
 		})
 
+		// Ventas
 		r.Route("/sales", func(r chi.Router) {
-			r.Post("/", saleHandler.Create)
-			r.Get("/", saleHandler.List)
-			r.Get("/{id}", saleHandler.Get)
+			r.With(auth.RequireRole("admin", "vendedor")).Post("/", saleHandler.Create)
+			r.With(auth.RequireRole("admin", "vendedor")).Get("/", saleHandler.List)
+			r.With(auth.RequireRole("admin", "vendedor")).Get("/pending", wooConfirmHandler.ListPending)
+			r.With(auth.RequireRole("admin", "vendedor")).Get("/{id}", saleHandler.Get)
+			r.With(auth.RequireRole("admin", "vendedor")).Patch("/{id}/confirm", wooConfirmHandler.Confirm)
 		})
 
-		// JSON de métricas para el dashboard
+		// Dashboard (métricas)
 		r.With(auth.RequireRole("admin")).Get("/dashboard", dashboardHandler.Get)
 
+		// Caja
 		r.Route("/cash", func(r chi.Router) {
 			r.With(auth.RequireRole("admin", "vendedor")).Get("/today", cashHandler.Today)
 			r.With(auth.RequireRole("admin")).Post("/close", cashHandler.Close)
 			r.With(auth.RequireRole("admin")).Get("/history", cashHandler.History)
 		})
-
-		// ❌ AQUÍ ESTABAN TUS RUTAS DE PÁGINAS DUPLICADAS. LAS HE ELIMINADO.
 	})
 
-	// ── AUTH ──
-	r.Route("/auth", func(r chi.Router) {
-		r.Post("/login", authHandler.Login)
-		r.Post("/refresh", authHandler.Refresh)
-		r.With(auth.Authenticate).Post("/logout", authHandler.Logout)
-		r.With(auth.Authenticate).Get("/me", authHandler.Me)
-	})
-
-	// ── SERVER ──
-	log.Println("🚀 LIBSAU corriendo en :" + port)
-
+	// ── Servidor ───────────────────────────────────────────────────
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      r,
@@ -163,6 +177,7 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
+	log.Println("🚀 LIBSAU corriendo en :" + port)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

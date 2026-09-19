@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/neocode96/libsau/internal/models"
 	"gorm.io/gorm"
+
+	"github.com/neocode96/libsau/internal/models"
 )
 
 type CategoryHandler struct {
@@ -16,38 +17,34 @@ func NewCategoryHandler(db *gorm.DB) *CategoryHandler {
 	return &CategoryHandler{db: db}
 }
 
-// GET /categories
+// GET /api/v1/categories — lista solo las categorías activas.
 func (h *CategoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	var categories []models.Category
-
-	if err := h.db.Find(&categories).Error; err != nil {
-		http.Error(w, "error", 500)
+	if err := h.db.Where("active = ?", true).Find(&categories).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "error listando categorías")
 		return
 	}
-
-	json.NewEncoder(w).Encode(categories)
+	respondJSON(w, http.StatusOK, categories)
 }
 
-// POST /categories
+// POST /api/v1/categories — crea una categoría nueva.
 func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var category models.Category
-
-	if err := json.NewDecoder(r.Body).Decode(&category); err != nil {
-		http.Error(w, "json invalido", 400)
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	if req.Name == "" {
+		respondError(w, http.StatusBadRequest, "name es requerido")
 		return
 	}
 
-	if category.Name == "" {
-		http.Error(w, "name requerido", 400)
+	cat := models.Category{Name: req.Name, Active: true}
+	if err := h.db.Create(&cat).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "error creando categoría")
 		return
 	}
-
-	category.Active = true
-
-	if err := h.db.Create(&category).Error; err != nil {
-		http.Error(w, "error guardando", 500)
-		return
-	}
-
-	json.NewEncoder(w).Encode(category)
+	respondJSON(w, http.StatusCreated, cat)
 }

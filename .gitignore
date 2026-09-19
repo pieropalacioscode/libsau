@@ -32,3 +32,9 @@ coverage.out
 #tailwind
 node_modules/
 static/css/output.css
+
+#No redundante
+cookies.txt
+*.tar.gz
+*.tgz
+node_modules/
