@@ -32,8 +32,8 @@ const ClaimsKey contextKey = "claims"
 func Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		// 🧠 MODO DEV (IMPORTANTE)
-		if os.Getenv("APP_ENV") == "development" {
+		// 🧠 MODO DEV (IMPORTANTE) - Ahora opt-in y respeta los tokens si se envían
+		if os.Getenv("APP_ENV") == "development" && os.Getenv("AUTH_DEV_BYPASS") == "true" && r.Header.Get("Authorization") == "" {
 			claims := &Claims{
 				UserID: 1,
 				Email:  "dev@local",

@@ -1,3 +1,4 @@
+// internal > handlers > sale_handler.go
 package handlers
 
 import (
@@ -12,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/neocode96/libsau/internal/auth"
+	"github.com/neocode96/libsau/internal/middleware"
 	"github.com/neocode96/libsau/internal/models"
 )
 
@@ -42,12 +44,14 @@ type CreateSaleRequest struct {
 // Si falla cualquier paso → ROLLBACK total. Stock nunca queda en estado inválido.
 
 func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
-	// ── 1. Leer quién está vendiendo (del JWT) ────────────────────────────────
+	// ── 1. Leer quién está vendiendo (del JWT) y en qué negocio ───────────────
 	claims := auth.GetClaims(r)
 	if claims == nil {
 		respondError(w, http.StatusUnauthorized, "no autenticado")
 		return
 	}
+	uid := claims.UserID
+	bid := middleware.BusinessID(r)
 
 	// ── 2. Parsear y validar request ──────────────────────────────────────────
 	var req CreateSaleRequest
@@ -100,12 +104,13 @@ func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
 			// ── 3a. SELECT FOR UPDATE en el producto ──────────────────────────
 			// NOWAIT: si otra transacción tiene el lock, falla inmediatamente
 			// con error en lugar de esperar (evita bloquear el POS).
-			// En producción: manejar el error NOWAIT con retry (ver D07).
+			// El filtro business_id garantiza que TODOS los ítems de la venta
+			// pertenecen al negocio actual: no hace falta otra validación cruzada.
 			var product models.Product
 			result := tx.Clauses(clause.Locking{
 				Strength: "UPDATE",
 				Options:  "NOWAIT", // falla si hay lock → evita espera indefinida
-			}).First(&product, itemReq.ProductID)
+			}).Where("business_id = ?", bid).First(&product, itemReq.ProductID)
 
 			if result.Error != nil {
 				if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -188,13 +193,14 @@ func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 		// ── 3f. Crear la venta con todos los ítems ────────────────────────────
 		sale = models.Sale{
-			UserID:    claims.UserID,
-			Origin:    "LOCAL",
-			PayMethod: req.PayMethod,
-			Status:    models.SaleStatusCompleted,
-			Total:     totalVenta,
-			Notes:     req.Notes,
-			Items:     saleItems,
+			BusinessID: bid,
+			UserID:     &uid,
+			Origin:     "LOCAL",
+			PayMethod:  req.PayMethod,
+			Status:     models.SaleStatusCompleted,
+			Total:      totalVenta,
+			Notes:      req.Notes,
+			Items:      saleItems,
 		}
 
 		// GORM crea la venta + todos los SaleItems en una sola operación
@@ -207,7 +213,8 @@ func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// ── 4. Manejar resultado de la transacción ────────────────────────────────
 	if err != nil {
-		if sErr, ok := err.(*saleError); ok {
+		var sErr *saleError
+		if errors.As(err, &sErr) {
 			respondJSON(w, sErr.status, map[string]string{
 				"error": sErr.message,
 				"field": sErr.field,
@@ -230,13 +237,17 @@ func (h *SaleHandler) Create(w http.ResponseWriter, r *http.Request) {
 // ─── GET /api/v1/sales ────────────────────────────────────────────────────────
 
 func (h *SaleHandler) List(w http.ResponseWriter, r *http.Request) {
+	bid := middleware.BusinessID(r)
+
 	var sales []models.Sale
 
 	query := h.db.
+		Where("business_id = ?", bid).
 		Preload("Items.Product.Category").
 		Preload("Items.Product").
 		Preload("User").
 		Order("created_at DESC")
+
 	// Filtro opcional por método de pago: GET /sales?pay_method=YAPE
 	if pm := r.URL.Query().Get("pay_method"); pm != "" {
 		query = query.Where("pay_method = ?", pm)
@@ -261,11 +272,16 @@ func (h *SaleHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "id inválido")
 		return
 	}
+	bid := middleware.BusinessID(r)
 
 	var sale models.Sale
-	err = h.db.Preload("Items.Product").Preload("User").First(&sale, id).Error
+	err = h.db.
+		Where("business_id = ?", bid).
+		Preload("Items.Product").
+		Preload("User").
+		First(&sale, id).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			respondError(w, http.StatusNotFound, "venta no encontrada")
 			return
 		}

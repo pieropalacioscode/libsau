@@ -2,13 +2,18 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/neocode96/libsau/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	"github.com/neocode96/libsau/internal/middleware"
+	"github.com/neocode96/libsau/internal/models"
 )
 
 type ProductHandler struct {
@@ -19,18 +24,29 @@ func NewProductHandler(db *gorm.DB) *ProductHandler {
 	return &ProductHandler{db: db}
 }
 
-// ─────────────────────────────────────────────
-// DTO (entrada limpia)
 type CreateProductRequest struct {
 	Name       string  `json:"name"`
 	SKU        string  `json:"sku"`
 	Price      float64 `json:"price"`
+	Cost       float64 `json:"cost"`
 	Stock      int     `json:"stock"`
 	CategoryID uint    `json:"category_id"`
 }
 
-// ─────────────────────────────────────────────
-// Helpers
+type UpdateProductRequest struct {
+	Name       *string  `json:"name"`
+	Price      *float64 `json:"price"`
+	Cost       *float64 `json:"cost"`
+	CategoryID *uint    `json:"category_id"`
+}
+
+type AdjustStockRequest struct {
+	Tipo   string `json:"tipo"`
+	Amount int    `json:"amount"`
+	Reason string `json:"reason"`
+}
+
+// ── Helpers compartidos por todo el package handlers ─────────────────────────
 
 func respondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -42,112 +58,119 @@ func respondError(w http.ResponseWriter, status int, msg string) {
 	respondJSON(w, status, map[string]string{"error": msg})
 }
 
-// ─────────────────────────────────────────────
-// GET /products
+func isDuplicateKey(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate key")
+}
+
+func pathID(r *http.Request) (uint, bool) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	return uint(id), err == nil && id > 0
+}
+
+// ── GET /products ────────────────────────────────────────────────────────────
 
 func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
 	var products []models.Product
-
 	if err := h.db.
-		Where("active = ?", true).
+		Where("business_id = ? AND active = ?", middleware.BusinessID(r), true).
 		Preload("Category").
 		Find(&products).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, "error obteniendo productos")
 		return
 	}
-
 	respondJSON(w, http.StatusOK, products)
 }
 
-// ─────────────────────────────────────────────
-// POST /products
+// ── POST /products ───────────────────────────────────────────────────────────
 
 func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req CreateProductRequest
-
-	// Decode JSON
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "JSON inválido")
 		return
 	}
 
-	// Validaciones mínimas
-	if req.Name == "" {
+	req.Name = strings.TrimSpace(req.Name)
+	req.SKU = strings.TrimSpace(req.SKU)
+	switch {
+	case req.Name == "":
 		respondError(w, http.StatusBadRequest, "name es requerido")
 		return
-	}
-	if req.SKU == "" {
+	case req.SKU == "":
 		respondError(w, http.StatusBadRequest, "sku es requerido")
 		return
-	}
-	if req.CategoryID == 0 {
+	case req.CategoryID == 0:
 		respondError(w, http.StatusBadRequest, "category_id es requerido")
 		return
-	}
-
-	// Verificar que la categoría existe
-	var category models.Category
-	if err := h.db.First(&category, req.CategoryID).Error; err != nil {
-		respondError(w, http.StatusBadRequest, "categoría no existe")
+	case req.Price < 0 || req.Cost < 0 || req.Stock < 0:
+		respondError(w, http.StatusBadRequest, "price, cost y stock no pueden ser negativos")
 		return
 	}
 
-	// Crear modelo
+	bid := middleware.BusinessID(r)
+
+	// La categoría debe pertenecer al mismo negocio que el producto.
+	var category models.Category
+	if err := h.db.Where("id = ? AND business_id = ?", req.CategoryID, bid).First(&category).Error; err != nil {
+		respondError(w, http.StatusBadRequest, "categoría no existe en este negocio")
+		return
+	}
+
 	product := models.Product{
+		BusinessID: bid,
 		Name:       req.Name,
 		SKU:        req.SKU,
 		Price:      req.Price,
+		Cost:       req.Cost,
 		Stock:      req.Stock,
 		CategoryID: req.CategoryID,
+		Active:     true,
 	}
-
 	if err := h.db.Create(&product).Error; err != nil {
+		if isDuplicateKey(err) {
+			respondError(w, http.StatusConflict, "ya existe un producto con ese SKU en este negocio")
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "error guardando producto")
 		return
 	}
 
-	// Cargar relación
 	h.db.Preload("Category").First(&product, product.ID)
-
 	respondJSON(w, http.StatusCreated, product)
 }
 
-// ─────────────────────────────────────────────
-// GET /products/{id}
+// ── GET /products/{id} ───────────────────────────────────────────────────────
 
 func (h *ProductHandler) Get(w http.ResponseWriter, r *http.Request) {
-	idParam := chi.URLParam(r, "id")
-
-	id, err := strconv.Atoi(idParam)
-	if err != nil || id <= 0 {
+	id, ok := pathID(r)
+	if !ok {
 		respondError(w, http.StatusBadRequest, "id inválido")
 		return
 	}
 
 	var product models.Product
-
-	if err := h.db.Preload("Category").First(&product, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			respondError(w, http.StatusNotFound, "producto no encontrado")
-			return
-		}
+	err := h.db.Preload("Category").
+		Where("id = ? AND business_id = ?", id, middleware.BusinessID(r)).
+		First(&product).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		respondError(w, http.StatusNotFound, "producto no encontrado")
+		return
+	}
+	if err != nil {
 		respondError(w, http.StatusInternalServerError, "error buscando producto")
 		return
 	}
-
-	// Se añadió la respuesta exitosa que faltaba
 	respondJSON(w, http.StatusOK, product)
 }
 
-type UpdateProductRequest struct {
-	Name       *string  `json:"name"`
-	Price      *float64 `json:"price"`
-	Cost       *float64 `json:"cost"`
-	CategoryID *uint    `json:"category_id"`
-}
+// ── PATCH /products/{id} ─────────────────────────────────────────────────────
 
 func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "id inválido")
+		return
+	}
 
 	var req UpdateProductRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -155,8 +178,10 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bid := middleware.BusinessID(r)
+
 	var product models.Product
-	if err := h.db.First(&product, id).Error; err != nil {
+	if err := h.db.Where("id = ? AND business_id = ?", id, bid).First(&product).Error; err != nil {
 		respondError(w, http.StatusNotFound, "producto no encontrado")
 		return
 	}
@@ -164,13 +189,12 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	updates := map[string]any{}
 
 	if req.Name != nil {
-		if *req.Name == "" {
+		if strings.TrimSpace(*req.Name) == "" {
 			respondError(w, http.StatusBadRequest, "name vacío")
 			return
 		}
-		updates["name"] = *req.Name
+		updates["name"] = strings.TrimSpace(*req.Name)
 	}
-
 	if req.Price != nil {
 		if *req.Price < 0 {
 			respondError(w, http.StatusBadRequest, "price inválido")
@@ -178,7 +202,6 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		updates["price"] = *req.Price
 	}
-
 	if req.Cost != nil {
 		if *req.Cost < 0 {
 			respondError(w, http.StatusBadRequest, "cost inválido")
@@ -186,8 +209,12 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		updates["cost"] = *req.Cost
 	}
-
 	if req.CategoryID != nil {
+		var c models.Category
+		if err := h.db.Where("id = ? AND business_id = ?", *req.CategoryID, bid).First(&c).Error; err != nil {
+			respondError(w, http.StatusBadRequest, "categoría no existe en este negocio")
+			return
+		}
 		updates["category_id"] = *req.CategoryID
 	}
 
@@ -196,46 +223,46 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Se removió el json.NewEncoder huérfano que causaba el error undefined
-
-	h.db.Model(&product).Updates(updates)
+	if err := h.db.Model(&product).Updates(updates).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "error actualizando producto")
+		return
+	}
 
 	h.db.Preload("Category").First(&product, product.ID)
 	respondJSON(w, http.StatusOK, product)
 }
 
+// ── DELETE /products/{id} (soft: active = false) ─────────────────────────────
+
 func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
-
-	var product models.Product
-
-	if err := h.db.First(&product, id).Error; err != nil {
-		respondError(w, http.StatusNotFound, "producto no encontrado")
+	id, ok := pathID(r)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "id inválido")
 		return
 	}
 
+	var product models.Product
+	if err := h.db.Where("id = ? AND business_id = ?", id, middleware.BusinessID(r)).First(&product).Error; err != nil {
+		respondError(w, http.StatusNotFound, "producto no encontrado")
+		return
+	}
 	if !product.Active {
 		respondError(w, http.StatusConflict, "ya está eliminado")
 		return
 	}
 
-	product.Active = false
-	h.db.Save(&product)
-
-	respondJSON(w, http.StatusOK, map[string]string{
-		"message": "producto eliminado",
-	})
+	if err := h.db.Model(&product).Update("active", false).Error; err != nil {
+		respondError(w, http.StatusInternalServerError, "error eliminando producto")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"message": "producto eliminado"})
 }
 
-type AdjustStockRequest struct {
-	Tipo   string `json:"tipo"`
-	Amount int    `json:"amount"`
-	Reason string `json:"reason"`
-}
+// ── PATCH /products/{id}/stock ───────────────────────────────────────────────
 
 func (h *ProductHandler) AdjustStock(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(chi.URLParam(r, "id"))
-	if err != nil || id <= 0 {
+	id, ok := pathID(r)
+	if !ok {
 		respondError(w, http.StatusBadRequest, "id inválido")
 		return
 	}
@@ -245,58 +272,52 @@ func (h *ProductHandler) AdjustStock(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "JSON inválido")
 		return
 	}
-
 	if req.Amount <= 0 {
 		respondError(w, http.StatusBadRequest, "amount inválido")
 		return
 	}
-
 	if len(req.Reason) < 5 {
 		respondError(w, http.StatusBadRequest, "reason requerido")
 		return
 	}
 
-	// Se removió el json.NewEncoder huérfano que causaba el error undefined
+	bid := middleware.BusinessID(r)
 
 	var product models.Product
-
-	err = h.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&product, id).Error; err != nil {
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		// Lock: dos ajustes simultáneos ya no se pisan (antes: Save sobre lectura sin lock).
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND business_id = ?", id, bid).
+			First(&product).Error; err != nil {
 			return err
 		}
 
-		before := product.Stock
-		after := before
-
+		after := product.Stock
 		switch req.Tipo {
 		case "set":
 			after = req.Amount
 		case "add":
-			after = before + req.Amount
+			after = product.Stock + req.Amount
 		case "sub":
-			if before < req.Amount {
+			if product.Stock < req.Amount {
 				return fmt.Errorf("stock insuficiente")
 			}
-			after = before - req.Amount
+			after = product.Stock - req.Amount
 		default:
 			return fmt.Errorf("tipo inválido")
 		}
 
-		product.Stock = after
-
-		if err := tx.Save(&product).Error; err != nil {
-			return err
-		}
-
-		return nil
+		return tx.Model(&product).UpdateColumn("stock", after).Error
 	})
-
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			respondError(w, http.StatusNotFound, "producto no encontrado")
+			return
+		}
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	h.db.Preload("Category").First(&product, product.ID)
-
 	respondJSON(w, http.StatusOK, product)
 }

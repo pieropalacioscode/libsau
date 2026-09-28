@@ -17,7 +17,7 @@ type Claims struct {
 }
 
 // 🔥 PROTECCIÓN: nunca permitir secret vacío
-var secret = []byte(config.JWTSecret)
+func secretBytes() []byte { return []byte(config.JWTSecret) }
 
 var ErrTokenExpired = errors.New("token expirado")
 
@@ -35,7 +35,7 @@ func GenerateAccessToken(userID uint, email, role string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(secret)
+	return token.SignedString(secretBytes())
 }
 
 // ───── VALIDAR ACCESS TOKEN ─────
@@ -48,7 +48,7 @@ func ValidateAccessToken(tokenStr string) (*Claims, error) {
 			return nil, errors.New("método de firma inválido")
 		}
 
-		return secret, nil
+		return secretBytes(), nil
 	})
 
 	if err != nil {
@@ -81,7 +81,7 @@ func GenerateRefreshToken(userID uint) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	return token.SignedString(secret)
+	return token.SignedString(secretBytes())
 }
 
 func ValidateRefreshToken(tokenStr string) (*jwt.RegisteredClaims, error) {
@@ -96,7 +96,7 @@ func ValidateRefreshToken(tokenStr string) (*jwt.RegisteredClaims, error) {
 				return nil, errors.New("invalid signing method")
 			}
 
-			return secret, nil
+			return secretBytes(), nil
 		},
 	)
 

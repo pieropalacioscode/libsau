@@ -13,7 +13,8 @@ func tmplDir() string {
 	return filepath.Join(wd, "templates")
 }
 
-func render(w http.ResponseWriter, r *http.Request, page string, data any) {
+// Se eliminó el parámetro 'r *http.Request' porque no se utilizaba
+func render(w http.ResponseWriter, page string, data any) {
 	base := tmplDir()
 	files := []string{
 		filepath.Join(base, "layout.html"),
@@ -30,7 +31,8 @@ func render(w http.ResponseWriter, r *http.Request, page string, data any) {
 	}
 }
 
-func renderLogin(w http.ResponseWriter, r *http.Request) {
+// Se eliminó el parámetro 'r *http.Request' porque no se utilizaba
+func renderLogin(w http.ResponseWriter) {
 	base := tmplDir()
 	tmpl, err := template.ParseFiles(filepath.Join(base, "login.html"))
 	if err != nil {
@@ -46,21 +48,21 @@ func PageHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func PageLogin(w http.ResponseWriter, r *http.Request) {
-	renderLogin(w, r)
+	renderLogin(w)
 }
 
 func PagePOS(w http.ResponseWriter, r *http.Request) {
-	render(w, r, "pos/index.html", map[string]string{"Title": "Punto de Venta"})
+	render(w, "pos/index.html", map[string]string{"Title": "Punto de Venta"})
 }
 
 // func PageDashboard(w http.ResponseWriter, r *http.Request) {
-// 	render(w, r, "dashboard/index.html", map[string]string{"Title": "Dashboard"})
+// 	render(w, "dashboard/index.html", map[string]string{"Title": "Dashboard"})
 // }
 
 func PageCash(w http.ResponseWriter, r *http.Request) {
-	render(w, r, "cash/index.html", map[string]string{"Title": "Cierre de Caja"})
+	render(w, "cash/index.html", map[string]string{"Title": "Cierre de Caja"})
 }
 
 func PageProducts(w http.ResponseWriter, r *http.Request) {
-	render(w, r, "products/index.html", map[string]string{"Title": "Productos"})
+	render(w, "products/index.html", map[string]string{"Title": "Productos"})
 }

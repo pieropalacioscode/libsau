@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"gorm.io/gorm"
-
+	"github.com/neocode96/libsau/internal/middleware"
 	"github.com/neocode96/libsau/internal/models"
+	"gorm.io/gorm"
 )
 
 type SearchHandler struct {
@@ -26,7 +26,7 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 
 	var products []models.Product
-	tx := h.db.Preload("Category").Where("active = ?", true)
+	tx := h.db.Preload("Category").Where("business_id = ? AND active = ?", middleware.BusinessID(r), true)
 
 	if q == "" {
 		tx = tx.Order("id DESC").Limit(8)

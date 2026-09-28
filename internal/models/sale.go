@@ -19,8 +19,9 @@ const (
 
 // Sale — Cabecera de venta. LOCAL o WOO. Cliente nullable = venta anónima.
 type Sale struct {
-	ID            uint    `gorm:"primaryKey;autoIncrement"                                                  json:"id"`
-	UserID        uint    `gorm:"not null;index"                                                            json:"user_id"`
+	ID            uint    `gorm:"primaryKey;autoIncrement" json:"id"`
+	BusinessID    uint    `gorm:"not null;index"           json:"business_id"`
+	UserID        *uint   `gorm:"index"                    json:"user_id"`
 	Origin        string  `gorm:"type:varchar(10);not null;default:'LOCAL'"                                 json:"origin"`
 	ExternalID    *string `gorm:"type:varchar(50);uniqueIndex:uq_sale_external,where:external_id IS NOT NULL" json:"external_id,omitempty"`
 	PayMethod     string  `gorm:"type:varchar(20);not null"                                                 json:"pay_method"`

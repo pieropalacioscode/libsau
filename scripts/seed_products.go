@@ -1,5 +1,6 @@
 //go:build ignore
 
+// scripts > seed_products.go
 package main
 
 import (
