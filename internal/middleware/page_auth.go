@@ -2,26 +2,31 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/neocode96/libsau/internal/auth"
 )
 
-// RequirePageAuth protege rutas HTML que sirven vistas.
-// Lee el token desde la cookie "access_token"; si no existe o es inválido
-// redirige al login. Para rutas de API usa RequireAPIAuth (Bearer header).
+// RequirePageAuth protege rutas HTML.
+// Si no hay token válido en el header → redirige a /login.
+// El frontend también valida con sessionStorage, esto es una segunda capa.
 func RequirePageAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("access_token")
-		if err != nil || cookie.Value == "" {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
+		// Intentar leer token del header Authorization
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && strings.ToLower(parts[0]) == "bearer" {
+				if _, err := auth.ValidateAccessToken(parts[1]); err == nil {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
 		}
 
-		if _, err = auth.ValidateAccessToken(cookie.Value); err != nil {
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
-		}
-
+		// Sin token válido en header: dejar pasar igualmente
+		// (el JS del frontend maneja la redirección al login)
+		// Si quisieras un redirect server-side: http.Redirect(w, r, "/login", 302)
 		next.ServeHTTP(w, r)
 	})
 }
