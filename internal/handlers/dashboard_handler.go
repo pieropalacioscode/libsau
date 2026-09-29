@@ -72,6 +72,11 @@ type dailyTotalsRow struct {
 // ─── GET /api/v1/dashboard ────────────────────────────────────────────────────
 
 func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
+	bid, ok := requireFullTier(h.db, w, r)
+	if !ok {
+		return
+	}
+
 	// "Ahora" en hora peruana — esto determina qué día es "hoy" para el negocio.
 	now := time.Now().In(loc)
 
@@ -95,23 +100,25 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 			), 0)                                            AS total_profit
 		FROM sales s
 		LEFT JOIN sale_items si ON si.sale_id = s.id
-		WHERE s.status = 'COMPLETED'
+		WHERE s.business_id = ?
+		  AND s.status = 'COMPLETED'
 		  AND s.created_at >= ?
 		  AND s.created_at <  ?
 		  AND s.deleted_at IS NULL
-	`, startOfDay, endOfDay).Scan(&totals)
+	`, bid, startOfDay, endOfDay).Scan(&totals)
 
 	// ── Query 2: Desglose por método de pago ─────────────────────────────────
 	var payRows []payMethodRow
 	h.db.Raw(`
 		SELECT pay_method, COALESCE(SUM(total), 0) AS revenue
 		FROM sales
-		WHERE status     = 'COMPLETED'
+		WHERE business_id = ?
+		  AND status     = 'COMPLETED'
 		  AND created_at >= ?
 		  AND created_at <  ?
 		  AND deleted_at IS NULL
 		GROUP BY pay_method
-	`, startOfDay, endOfDay).Scan(&payRows)
+	`, bid, startOfDay, endOfDay).Scan(&payRows)
 
 	byPayMethod := make(map[string]float64)
 	for _, row := range payRows {
@@ -142,7 +149,7 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	var lowStockProducts []models.Product
 	h.db.Preload("Category").
-		Where("stock <= ? AND active = ?", threshold, true).
+		Where("business_id = ? AND stock <= ? AND active = ?", bid, threshold, true).
 		Order("stock ASC").
 		Limit(10).
 		Find(&lowStockProducts)
@@ -173,11 +180,12 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		FROM sales s
 		LEFT JOIN sale_items si ON si.sale_id = s.id
 		LEFT JOIN users u       ON u.id       = s.user_id
-		WHERE s.deleted_at IS NULL
+		WHERE s.business_id = ?
+		  AND s.deleted_at IS NULL
 		GROUP BY s.id, u.name
 		ORDER BY s.created_at DESC
 		LIMIT 5
-	`).Scan(&recentRows)
+	`, bid).Scan(&recentRows)
 
 	for _, row := range recentRows {
 		response.RecentSales = append(response.RecentSales, RecentSale{
