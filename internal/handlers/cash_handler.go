@@ -46,6 +46,11 @@ type CloseRequest struct {
 
 // GET /api/v1/cash/today
 func (h *CashHandler) Today(w http.ResponseWriter, r *http.Request) {
+	bid, ok := requireFullTier(h.db, w, r)
+	if !ok {
+		return
+	}
+
 	now := time.Now().UTC()
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -64,11 +69,12 @@ func (h *CashHandler) Today(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(CASE WHEN pay_method='PLIN'     THEN total END), 0) AS plin,
 			COALESCE(SUM(CASE WHEN pay_method='TARJETA'  THEN total END), 0) AS tarjeta
 		FROM sales
-		WHERE status      = 'COMPLETED'
+		WHERE business_id = ?
+		  AND status      = 'COMPLETED'
 		  AND created_at >= ?
 		  AND created_at <  ?
 		  AND deleted_at  IS NULL
-	`, start, end).Scan(&row)
+	`, bid, start, end).Scan(&row)
 
 	var recentRows []recentSaleRow
 	h.db.Raw(`
@@ -78,13 +84,14 @@ func (h *CashHandler) Today(w http.ResponseWriter, r *http.Request) {
 		FROM sales s
 		LEFT JOIN sale_items si ON si.sale_id = s.id
 		LEFT JOIN users u       ON u.id       = s.user_id
-		WHERE s.status      = 'COMPLETED'
+		WHERE s.business_id = ?
+		  AND s.status      = 'COMPLETED'
 		  AND s.created_at >= ?
 		  AND s.created_at <  ?
 		  AND s.deleted_at  IS NULL
 		GROUP BY s.id, u.name
 		ORDER BY s.created_at DESC
-	`, start, end).Scan(&recentRows)
+	`, bid, start, end).Scan(&recentRows)
 
 	sales := make([]RecentSale, 0, len(recentRows))
 	for _, r := range recentRows {
@@ -115,6 +122,12 @@ func (h *CashHandler) Today(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/v1/cash/close
 func (h *CashHandler) Close(w http.ResponseWriter, r *http.Request) {
+	// El guard va antes que todo: un negocio CATALOG nunca llega a leer el body.
+	bid, ok := requireFullTier(h.db, w, r)
+	if !ok {
+		return
+	}
+
 	claims := auth.GetClaims(r)
 	if claims == nil {
 		respondError(w, http.StatusUnauthorized, "no autenticado")
@@ -167,11 +180,12 @@ func (h *CashHandler) Close(w http.ResponseWriter, r *http.Request) {
 			COALESCE(SUM(CASE WHEN pay_method='PLIN'     THEN total END), 0) AS plin,
 			COALESCE(SUM(CASE WHEN pay_method='TARJETA'  THEN total END), 0) AS tarjeta
 		FROM sales
-		WHERE status      = 'COMPLETED'
+		WHERE business_id = ?
+		  AND status      = 'COMPLETED'
 		  AND created_at >= ?
 		  AND created_at <  ?
 		  AND deleted_at  IS NULL
-	`, start, end).Scan(&row)
+	`, bid, start, end).Scan(&row)
 
 	difference := req.CashDeclared - row.Cash
 
@@ -242,7 +256,12 @@ func (h *CashHandler) Close(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/v1/cash/history
+// Nota: CashClose todavía no tiene business_id; con un solo negocio FULL el historial es global.
 func (h *CashHandler) History(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireFullTier(h.db, w, r); !ok {
+		return
+	}
+
 	var closes []models.CashClose
 	h.db.Order("date DESC").Limit(30).Find(&closes)
 

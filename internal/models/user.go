@@ -21,7 +21,9 @@ type User struct {
 	PasswordHash string `gorm:"not null" json:"-"`
 	Role         Role   `gorm:"default:'vendedor'" json:"role"`
 	Active       bool   `gorm:"default:true" json:"active"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    gorm.DeletedAt `gorm:"index"`
+	// nil = admin de plataforma (todos los negocios); con valor = atado a ese negocio
+	BusinessID *uint `gorm:"index" json:"business_id,omitempty"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  gorm.DeletedAt `gorm:"index"`
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -9,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/neocode96/libsau/internal/auth"
+	"github.com/neocode96/libsau/internal/middleware"
 	"github.com/neocode96/libsau/internal/models"
 	"github.com/neocode96/libsau/internal/webhook"
 )
@@ -23,12 +25,14 @@ func NewWooConfirmHandler(db *gorm.DB, worker *webhook.WooWorker) *WooConfirmHan
 }
 
 // GET /api/v1/sales/pending
-// Lista ventas WOO pendientes de confirmación.
+// Lista ventas WOO pendientes de confirmación DEL NEGOCIO ACTUAL.
 func (h *WooConfirmHandler) ListPending(w http.ResponseWriter, r *http.Request) {
+	bid := middleware.BusinessID(r)
+
 	var sales []models.Sale
 	if err := h.db.
 		Preload("Items.Product").
-		Where("origin = ? AND status = ?", "WOO", "PENDING_CONFIRM").
+		Where("business_id = ? AND origin = ? AND status = ?", bid, "WOO", "PENDING_CONFIRM").
 		Order("created_at ASC"). // más antiguas primero
 		Find(&sales).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, "error listando pedidos")
@@ -47,12 +51,14 @@ type ConfirmRequest struct {
 }
 
 // PATCH /api/v1/sales/:id/confirm
+// Solo actúa sobre pedidos del negocio actual: uno ajeno responde 404.
 func (h *WooConfirmHandler) Confirm(w http.ResponseWriter, r *http.Request) {
 	claims := auth.GetClaims(r)
 	if claims == nil {
 		respondError(w, http.StatusUnauthorized, "no autenticado")
 		return
 	}
+	bid := middleware.BusinessID(r)
 
 	id, err := strconv.Atoi(chi.URLParam(r, "id"))
 	if err != nil || id <= 0 {
@@ -72,13 +78,13 @@ func (h *WooConfirmHandler) Confirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Action == "confirm" {
-		// Confirmar: SELECT FOR UPDATE + descontar stock
-		if err := h.worker.ConfirmSale(uint(id), claims.UserID); err != nil {
-			if err.Error() != "" {
-				respondError(w, http.StatusConflict, err.Error())
+		// Confirmar: SELECT FOR UPDATE + descontar stock (todo dentro del negocio)
+		if err := h.worker.ConfirmSale(uint(id), claims.UserID, bid); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				respondError(w, http.StatusNotFound, "pedido no encontrado")
 				return
 			}
-			respondError(w, http.StatusInternalServerError, "error confirmando venta")
+			respondError(w, http.StatusConflict, err.Error())
 			return
 		}
 		respondJSON(w, http.StatusOK, map[string]string{
@@ -94,13 +100,25 @@ func (h *WooConfirmHandler) Confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	note := "Rechazado: " + req.Reason
-	if err := h.db.Model(&models.Sale{}).Where("id = ? AND status = ?", id, "PENDING_CONFIRM").
+	// sales.notes es varchar(300): se recorta el motivo para no romper el UPDATE
+	reason := req.Reason
+	if rs := []rune(reason); len(rs) > 250 {
+		reason = string(rs[:250])
+	}
+	note := "Rechazado: " + reason
+
+	res := h.db.Model(&models.Sale{}).
+		Where("id = ? AND business_id = ? AND status = ?", id, bid, "PENDING_CONFIRM").
 		Updates(map[string]any{
 			"status": "CANCELLED",
 			"notes":  note,
-		}).Error; err != nil {
+		})
+	if res.Error != nil {
 		respondError(w, http.StatusInternalServerError, "error rechazando pedido")
+		return
+	}
+	if res.RowsAffected == 0 {
+		respondError(w, http.StatusNotFound, "pedido pendiente no encontrado")
 		return
 	}
 

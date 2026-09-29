@@ -36,4 +36,3 @@ func Ping() error {
 	sqlDB, _ := DB.DB()
 	return sqlDB.Ping()
 }
-

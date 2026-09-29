@@ -1,3 +1,4 @@
+// cmd/api/main.go
 package main
 
 import (
@@ -17,7 +18,6 @@ import (
 	"github.com/neocode96/libsau/internal/database"
 	"github.com/neocode96/libsau/internal/handlers"
 	"github.com/neocode96/libsau/internal/middleware"
-	"github.com/neocode96/libsau/internal/models"
 	"github.com/neocode96/libsau/internal/webhook"
 )
 
@@ -36,7 +36,9 @@ func main() {
 		log.Fatal("❌ PostgreSQL:", err)
 	}
 
+	// Migraciones: la función migrate(db) vive en cmd/api/migrate.go
 	log.Println("🔄 Ejecutando migraciones...")
+<<<<<<< HEAD
 	if err := db.AutoMigrate(
 		&models.Category{},
 		&models.Product{},
@@ -47,6 +49,10 @@ func main() {
 		&handlers.StockAdjustmentLog{},
 	); err != nil {
 		log.Fatal("❌ AutoMigrate:", err)
+=======
+	if err := migrate(db); err != nil {
+		log.Fatal("❌ Error en migraciones:", err)
+>>>>>>> 3b6bdfda196598b76e3177de1f35ac6128256077
 	}
 	log.Println("✅ Tablas migradas")
 
@@ -134,10 +140,15 @@ func main() {
 	// ── API privada — requiere JWT ─────────────────────────────────────────────
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(auth.Authenticate)
+		r.Use(middleware.ResolveBusiness(db)) // negocio requerido en cada request
 
 		// Categorías
 		r.Route("/categories", func(r chi.Router) {
+<<<<<<< HEAD
 			r.Get("/",  categoryHandler.List)
+=======
+			r.Get("/", categoryHandler.List)
+>>>>>>> 3b6bdfda196598b76e3177de1f35ac6128256077
 			r.With(auth.RequireRole("admin")).Post("/", categoryHandler.Create)
 		})
 

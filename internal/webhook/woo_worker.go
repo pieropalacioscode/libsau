@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -38,10 +39,16 @@ func (w *WooWorker) Run(ctx context.Context) {
 		default:
 		}
 
-		// BLPOP bloquea hasta que haya un item (timeout 5s para chequear ctx)
+		// BRPOP bloquea hasta que haya un item (timeout 5s para chequear ctx)
 		result, err := w.rdb.BRPop(ctx, 5*time.Second, "woo:orders").Result()
 		if err != nil {
-			// Timeout normal → volver a esperar
+			// Timeout normal (redis.Nil) o contexto cancelado → volver al select
+			if errors.Is(err, redis.Nil) || ctx.Err() != nil {
+				continue
+			}
+			// Error real (Redis caído, etc.): esperar un poco para no girar en vacío
+			log.Printf("❌ WooWorker: error leyendo cola: %v", err)
+			time.Sleep(time.Second)
 			continue
 		}
 
@@ -77,9 +84,18 @@ func (w *WooWorker) processOrder(ctx context.Context, order *WooOrder) error {
 	// segunda línea de defensa que garantiza que nunca creamos duplicados.
 	var existing models.Sale
 	err := w.db.Where("external_id = ?", externalID).First(&existing).Error
-	if err == nil {
+	switch {
+	case err == nil:
 		log.Printf("ℹ️  WooWorker: order #%d ya existe como venta #%d", order.ID, existing.ID)
 		return nil
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		return fmt.Errorf("buscando venta existente: %w", err)
+	}
+
+	// ── Negocio dueño de los pedidos WOO ──────────────────────────────────────
+	var biz models.Business
+	if err := w.db.Select("id").Where("slug = ?", models.DefaultBusinessSlug).First(&biz).Error; err != nil {
+		return fmt.Errorf("negocio por defecto no encontrado: %w", err)
 	}
 
 	// ── Mapear line_items → productos locales ────────────────────────────────
@@ -98,24 +114,23 @@ func (w *WooWorker) processOrder(ctx context.Context, order *WooOrder) error {
 			continue
 		}
 
-		var product models.Product
-		// Estrategia de mapeo (en orden de confianza):
+		// Estrategia de mapeo (en orden de confianza), siempre dentro del negocio:
 		// 1. Por SKU exacto si WooCommerce lo envía
-		// 2. Por ID externo en metadata (a futuro con tabla producto_canal)
-		// 3. Por nombre similar (fallback)
+		// 2. Por nombre aproximado (fallback)
+		// 3. A futuro: por ID externo con la tabla producto_canal
+		var product models.Product
 		found := false
 
 		if line.SKU != "" {
-			if err := w.db.Where("sku = ? AND active = ?", line.SKU, true).
+			if err := w.db.Where("business_id = ? AND sku = ? AND active = ?", biz.ID, line.SKU, true).
 				First(&product).Error; err == nil {
 				found = true
 			}
 		}
 
-		if !found {
-			// Intentar por nombre (búsqueda aproximada)
-			if err := w.db.Where("name ILIKE ? AND active = ?",
-				"%"+line.Name+"%", true).First(&product).Error; err == nil {
+		if !found && line.Name != "" {
+			if err := w.db.Where("business_id = ? AND name ILIKE ? AND active = ?",
+				biz.ID, "%"+line.Name+"%", true).First(&product).Error; err == nil {
 				found = true
 			}
 		}
@@ -153,12 +168,15 @@ func (w *WooWorker) processOrder(ctx context.Context, order *WooOrder) error {
 	}
 
 	totalWoo, _ := strconv.ParseFloat(order.Total, 64)
+	phone := order.Billing.Phone
 
 	// ── Crear la venta en estado PENDIENTE ────────────────────────────────────
 	// IMPORTANTE: en este punto NO hay SELECT FOR UPDATE ni descuento de stock.
 	// El stock se descuenta SOLO cuando el vendedor confirma físicamente.
-	return w.db.Transaction(func(tx *gorm.DB) error {
-		sale := models.Sale{
+	var sale models.Sale
+	err = w.db.Transaction(func(tx *gorm.DB) error {
+		sale = models.Sale{
+			BusinessID:    biz.ID, // requiere el campo BusinessID en models.Sale (Fase 1, punto 2)
 			Origin:        "WOO",
 			PayMethod:     "WEB",
 			Status:        "PENDING_CONFIRM", // ← espera confirmación del vendedor
@@ -166,8 +184,9 @@ func (w *WooWorker) processOrder(ctx context.Context, order *WooOrder) error {
 			Notes:         &notes,
 			ExternalID:    &externalID,
 			CustomerName:  &customerName,
-			CustomerPhone: &order.Billing.Phone,
+			CustomerPhone: &phone,
 			ShippingAddr:  &addr,
+			// UserID queda nil: se asigna al confirmar (sales.user_id es nullable)
 		}
 
 		if err := tx.Create(&sale).Error; err != nil {
@@ -190,35 +209,45 @@ func (w *WooWorker) processOrder(ctx context.Context, order *WooOrder) error {
 				return fmt.Errorf("creando item: %w", err)
 			}
 		}
-
-		log.Printf("✅ WooWorker: order WOO #%d → venta local #%d creada (PENDING_CONFIRM)",
-			order.ID, sale.ID)
-
-		// Publicar evento en Redis para notificar al panel en tiempo real
-		event := map[string]any{
-			"type":         "new_woo_order",
-			"sale_id":      sale.ID,
-			"woo_order_id": order.ID,
-			"customer":     customerName,
-			"total":        totalWoo,
-			"items_count":  len(resolved),
-			"unmapped":     len(unmapped),
-		}
-		eventJSON, _ := json.Marshal(event)
-		w.rdb.Publish(ctx, "libsau:events", eventJSON)
-
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	log.Printf("✅ WooWorker: order WOO #%d → venta local #%d creada (PENDING_CONFIRM)",
+		order.ID, sale.ID)
+
+	// Publicar evento DESPUÉS del commit, para no avisar de una venta que
+	// podría hacer rollback.
+	event := map[string]any{
+		"type":         "new_woo_order",
+		"sale_id":      sale.ID,
+		"woo_order_id": order.ID,
+		"customer":     customerName,
+		"total":        totalWoo,
+		"items_count":  len(resolved),
+		"unmapped":     len(unmapped),
+	}
+	if eventJSON, err := json.Marshal(event); err == nil {
+		if err := w.rdb.Publish(ctx, "libsau:events", eventJSON).Err(); err != nil {
+			log.Printf("⚠️  WooWorker: no se pudo publicar evento: %v", err)
+		}
+	}
+
+	return nil
 }
 
 // ── ConfirmSale: vendedor confirma que sí hay stock ───────────────────────────
 // AQUÍ es donde se hace el SELECT FOR UPDATE y se descuenta el stock.
 
-func (w *WooWorker) ConfirmSale(saleID uint, userID uint) error {
+func (w *WooWorker) ConfirmSale(saleID, userID, businessID uint) error {
 	return w.db.Transaction(func(tx *gorm.DB) error {
-		// Cargar la venta con lock
+		// Cargar la venta con lock, solo si pertenece al negocio indicado.
+		// Si es de otro negocio devuelve gorm.ErrRecordNotFound (el handler responde 404).
 		var sale models.Sale
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("business_id = ?", businessID).
 			Preload("Items").First(&sale, saleID).Error; err != nil {
 			return err
 		}
