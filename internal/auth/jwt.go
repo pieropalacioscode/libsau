@@ -16,10 +16,15 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// 🔥 PROTECCIÓN: nunca permitir secret vacío
-func secretBytes() []byte { return []byte(config.JWTSecret) }
-
 var ErrTokenExpired = errors.New("token expirado")
+
+// 🔥 PROTECCIÓN: nunca permitir secret vacío
+func secretBytes() []byte {
+	if config.JWTSecret == "" {
+		panic("JWTSecret no está configurado (revisar variables de entorno)")
+	}
+	return []byte(config.JWTSecret)
+}
 
 // ───── ACCESS TOKEN (15 min) ─────
 func GenerateAccessToken(userID uint, email, role string) (string, error) {
@@ -40,14 +45,11 @@ func GenerateAccessToken(userID uint, email, role string) (string, error) {
 
 // ───── VALIDAR ACCESS TOKEN ─────
 func ValidateAccessToken(tokenStr string) (*Claims, error) {
-
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
-
 		// 🔒 evitar ataques de algoritmo
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("método de firma inválido")
 		}
-
 		return secretBytes(), nil
 	})
 
@@ -70,8 +72,9 @@ func ValidateAccessToken(tokenStr string) (*Claims, error) {
 
 	return claims, nil
 }
-func GenerateRefreshToken(userID uint) (string, error) {
 
+// ───── REFRESH TOKEN (7 días) ─────
+func GenerateRefreshToken(userID uint) (string, error) {
 	claims := jwt.RegisteredClaims{
 		Subject:   fmt.Sprintf("%d", userID),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
@@ -80,25 +83,18 @@ func GenerateRefreshToken(userID uint) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
 	return token.SignedString(secretBytes())
 }
 
+// ───── VALIDAR REFRESH TOKEN ─────
 func ValidateRefreshToken(tokenStr string) (*jwt.RegisteredClaims, error) {
-
-	token, err := jwt.ParseWithClaims(
-		tokenStr,
-		&jwt.RegisteredClaims{},
-		func(t *jwt.Token) (any, error) {
-
-			// 🔒 seguridad algoritmo
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, errors.New("invalid signing method")
-			}
-
-			return secretBytes(), nil
-		},
-	)
+	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (any, error) {
+		// 🔒 seguridad algoritmo
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("invalid signing method")
+		}
+		return secretBytes(), nil
+	})
 
 	if err != nil {
 		return nil, errors.New("refresh token inválido")
@@ -120,14 +116,13 @@ func ValidateRefreshToken(tokenStr string) (*jwt.RegisteredClaims, error) {
 
 	return claims, nil
 }
-func ExtractUserIDFromRefresh(claims *jwt.RegisteredClaims) (uint, error) {
 
+// ───── EXTRACCIÓN USER ID ─────
+func ExtractUserIDFromRefresh(claims *jwt.RegisteredClaims) (uint, error) {
 	var userID uint
 	_, err := fmt.Sscanf(claims.Subject, "%d", &userID)
-
 	if err != nil || userID == 0 {
 		return 0, errors.New("userID inválido")
 	}
-
 	return userID, nil
 }

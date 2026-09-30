@@ -1,4 +1,5 @@
 //seed_products.go
+
 package main
 
 import (

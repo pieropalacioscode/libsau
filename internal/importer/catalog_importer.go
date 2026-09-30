@@ -59,31 +59,31 @@ type Atributo struct {
 type ProductRow struct {
 	RowIndex int // fila real en el Excel (para reportar errores al usuario)
 
-	SKU                  string
-	Tipo                 string
-	GTIN                 string
-	Nombre               string
-	Publicado            bool
-	Destacado            bool
-	Visibilidad          string
-	DescripcionCorta     string
-	PermiteValoraciones  bool
-	PrecioRebajado       *float64 // nil si viene vacío
-	Inventario           int      // = "Stock" en el lenguaje del plan de fases
-	BajoInventario       int
-	PesoG                float64
-	LongitudCm           float64
-	AnchuraCm            float64
-	AlturaCm             float64
-	Ilustraciones        string
-	PrecioNormal         float64 // = "Precio regular" en el lenguaje del plan de fases
-	Categorias           string  // jerarquía separada por ">"
-	Imagenes             string
-	VentasDirigidas      string
-	VentasCruzadas       string
-	Marcas               string
-	ISBN                 string
-	Atributos            [16]Atributo
+	SKU                 string
+	Tipo                string
+	GTIN                string
+	Nombre              string
+	Publicado           bool
+	Destacado           bool
+	Visibilidad         string
+	DescripcionCorta    string
+	PermiteValoraciones bool
+	PrecioRebajado      *float64 // nil si viene vacío
+	Inventario          int      // = "Stock" en el lenguaje del plan de fases
+	BajoInventario      int
+	PesoG               float64
+	LongitudCm          float64
+	AnchuraCm           float64
+	AlturaCm            float64
+	Ilustraciones       string
+	PrecioNormal        float64 // = "Precio regular" en el lenguaje del plan de fases
+	Categorias          string  // jerarquía separada por ">"
+	Imagenes            string
+	VentasDirigidas     string
+	VentasCruzadas      string
+	Marcas              string
+	ISBN                string
+	Atributos           [16]Atributo
 
 	YoastFocusKW          string
 	YoastFocusKWTextInput string
@@ -382,4 +382,18 @@ func parseIntSafe(v string, rowIndex int, field string, errs *[]RowError) int {
 		return 0
 	}
 	return n
+}
+
+// ListSheets devuelve los nombres de las hojas de un libro Excel, en el
+// orden en que aparecen. Sirve para que el operador confirme cuál hoja tiene
+// el catálogo real antes de importar — algunos archivos traen la data en una
+// hoja con nombre propio (p.ej. "Alfaguara") en vez de la primera, y el
+// nombre varía de un archivo a otro.
+func ListSheets(path string) ([]string, error) {
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo abrir el Excel: %w", err)
+	}
+	defer f.Close()
+	return f.GetSheetList(), nil
 }

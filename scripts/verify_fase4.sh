@@ -62,11 +62,24 @@ eq "el conteo no cambia al reimportar el mismo archivo" "$AFTER1" "$AFTER2"
 echo "$OUT2" | grep -q " 0 actualizados/a actualizar\| 0 creados" > /dev/null 2>&1
 echo "$OUT2" | grep -qE "\b0 creados\b" && ok "la segunda corrida reporta 0 creados" || bad "la segunda corrida no reportó 0 creados: $OUT2"
 
-echo "E. Categorías quedaron limpias, no texto crudo del Excel"
+echo "E. Atributos: se guardaron y no se duplican al reimportar"
+ATTRS1="$(sql "SELECT count(*) FROM product_attributes pa JOIN products p ON p.id=pa.product_id WHERE p.business_id=$BIZ_ID")"
+[ "$ATTRS1" -gt 0 ] && ok "se guardaron atributos (Autor, Editorial, etc.): $ATTRS1 filas" \
+  || bad "no se guardó ningún atributo — revisa que corriste la migración (AutoMigrate con ProductAttribute)"
+OUT3="$(go run cmd/import/main.go --file="$FILE" --business="$BIZ_SLUG" "${sheet_arg[@]}" 2>&1)"
+ATTRS2="$(sql "SELECT count(*) FROM product_attributes pa JOIN products p ON p.id=pa.product_id WHERE p.business_id=$BIZ_ID")"
+eq "el conteo de atributos no cambia al reimportar" "$ATTRS1" "$ATTRS2"
+
+echo "F. ISBN quedó guardado cuando el Excel lo trae"
+ISBN_COUNT="$(sql "SELECT count(*) FROM products WHERE business_id=$BIZ_ID AND isbn IS NOT NULL")"
+[ "$ISBN_COUNT" -gt 0 ] && ok "al menos un producto quedó con ISBN ($ISBN_COUNT en total)" \
+  || bad "ningún producto tiene ISBN — revisa la migración o el mapeo en isbnFromRow"
+
+echo "G. Categorías quedaron limpias, no texto crudo del Excel"
 DIRTY="$(sql "SELECT count(*) FROM categories WHERE business_id=$BIZ_ID AND (name LIKE '%>%' OR name = '')")"
 eq "ninguna categoría trae '>' sin resolver ni queda vacía" "0" "$DIRTY"
 
-echo "F. Todo quedó bajo el negocio correcto"
+echo "H. Todo quedó bajo el negocio correcto"
 ORPHANS="$(sql "SELECT count(*) FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.business_id=$BIZ_ID AND (c.business_id IS NULL OR c.business_id<>$BIZ_ID)")"
 eq "ningún producto quedó con categoría de otro negocio" "0" "$ORPHANS"
 
