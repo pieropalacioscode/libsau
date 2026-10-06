@@ -37,7 +37,8 @@ static/css/output.css
 cookies.txt
 *.tar.gz
 *.tgz
-node_modules/catalogo.sql
+node_modules/
+catalogo.sql
 *.dump
 *.xlsx
 cookies.txt
