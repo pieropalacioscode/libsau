@@ -4,12 +4,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/libsau-api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/libsau-import ./cmd/import
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata \
  && addgroup -S app && adduser -S -G app app
 WORKDIR /app
 COPY --from=builder /out/libsau-api .
+COPY --from=builder /out/libsau-import .
 COPY --from=builder /src/static ./static
 COPY --from=builder /src/templates ./templates
 USER app

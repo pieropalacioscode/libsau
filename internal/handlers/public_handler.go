@@ -60,8 +60,9 @@ type publicAttribute struct {
 
 type publicProductDetail struct {
 	publicProduct
-	ISBN       *string           `json:"isbn,omitempty"`
-	Attributes []publicAttribute `json:"attributes"`
+	ISBN        *string           `json:"isbn,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Attributes  []publicAttribute `json:"attributes"`
 }
 
 type publicCategory struct {
@@ -236,6 +237,7 @@ func (h *PublicHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	detail := publicProductDetail{
 		publicProduct: toPublicProduct(p),
 		ISBN:          p.ISBN,
+		Description:   p.Description,
 		Attributes:    make([]publicAttribute, 0, len(attrs)),
 	}
 	for _, a := range attrs {

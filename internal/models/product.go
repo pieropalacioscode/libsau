@@ -23,13 +23,14 @@ type Product struct {
 	ISBN *string `gorm:"type:varchar(20);uniqueIndex:uq_product_business_isbn,priority:2" json:"isbn,omitempty"`
 	// ImageURL es la URL completa de la foto (Cloudflare en la Fase 9).
 	// nil cuando el producto todavía no tiene foto.
-	ImageURL   *string  `gorm:"type:varchar(500)" json:"image_url,omitempty"`
-	Price      float64  `gorm:"type:numeric(10,2);not null;default:0" json:"price"`
-	Stock      int      `json:"stock"`
-	CategoryID uint     `json:"category_id"`
-	Category   Category `gorm:"foreignKey:CategoryID" json:"category"`
-	Cost       float64  `gorm:"type:numeric(10,2);not null;default:0" json:"cost"`
-	Active     bool     `gorm:"default:true" json:"active"`
+	ImageURL    *string  `gorm:"type:varchar(500)" json:"image_url,omitempty"`
+	Description *string  `gorm:"type:text" json:"description,omitempty"`
+	Price       float64  `gorm:"type:numeric(10,2);not null;default:0" json:"price"`
+	Stock       int      `json:"stock"`
+	CategoryID  uint     `json:"category_id"`
+	Category    Category `gorm:"foreignKey:CategoryID" json:"category"`
+	Cost        float64  `gorm:"type:numeric(10,2);not null;default:0" json:"cost"`
+	Active      bool     `gorm:"default:true" json:"active"`
 }
 
 // ProductAttribute guarda los atributos libres del Excel (Autor, Editorial,

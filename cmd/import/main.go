@@ -6,6 +6,7 @@
 //	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante
 //	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante --dry-run
 //	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante --sheet=Alfaguara
+//	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante --image-base=https://img.docentesmart.com/libprep
 //
 // Idempotente: correrlo dos veces con el mismo archivo no duplica productos
 // ni atributos (upsert por business_id+sku y por product_id+nombre). Si el
@@ -15,6 +16,10 @@
 //
 // Si el archivo tiene más de una hoja y no se pasa --sheet, el programa se
 // detiene y muestra los nombres reales en vez de adivinar cuál usar.
+//
+// Imágenes: se toma la primera URL de la columna de imágenes. Con
+// --image-base se conserva solo el nombre del archivo y se reescribe a
+// <image-base>/<archivo>. Una reimportación nunca borra una foto ya cargada.
 package main
 
 import (
@@ -23,6 +28,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"strings"
 
 	"gorm.io/gorm"
@@ -39,6 +45,7 @@ func main() {
 	sheet := flag.String("sheet", "", "nombre de la hoja a leer (vacío = detectar automáticamente)")
 	dryRun := flag.Bool("dry-run", false, "parsea y valida sin escribir en la base de datos")
 	listSheets := flag.Bool("list-sheets", false, "lista las hojas del Excel y termina, sin importar nada")
+	imageBase := flag.String("image-base", "", "reescribe cada imagen a <image-base>/<archivo>, ej. https://img.docentesmart.com/libprep (vacío = usar la URL del Excel)")
 	flag.Parse()
 
 	if *listSheets {
@@ -58,7 +65,7 @@ func main() {
 	}
 
 	if *file == "" || *businessSlug == "" {
-		fmt.Println("uso: go run cmd/import/main.go --file=catalogo.xlsx --business=slug-del-negocio [--sheet=Nombre] [--dry-run]")
+		fmt.Println("uso: go run cmd/import/main.go --file=catalogo.xlsx --business=slug-del-negocio [--sheet=Nombre] [--image-base=URL] [--dry-run]")
 		fmt.Println("     go run cmd/import/main.go --file=catalogo.xlsx --list-sheets")
 		os.Exit(1)
 	}
@@ -145,7 +152,12 @@ func main() {
 			fmt.Println("ℹ️  el Excel no trae columna de costo: todos los productos quedan con cost=0 (ajustar luego a mano)")
 		}
 
-		productID, wasCreated, err := upsertProduct(db, biz.ID, catID, row, *dryRun)
+		imageURL, imgErr := imageURLFromRow(row, *imageBase)
+		if imgErr != nil {
+			fmt.Printf("⚠️  fila %d: SKU %q: imagen ignorada: %v\n", row.RowIndex, row.SKU, imgErr)
+		}
+
+		productID, wasCreated, err := upsertProduct(db, biz.ID, catID, row, imageURL, *dryRun)
 		if err != nil {
 			fmt.Printf("⚠️  fila %d: no se pudo guardar el producto SKU %q: %v\n", row.RowIndex, row.SKU, err)
 			skipped++
@@ -202,6 +214,34 @@ func normalizeMaybeEmpty(v string) string {
 	return v
 }
 
+// nonEmptyPtr devuelve nil si el valor está vacío (o es "-"); si no, un
+// puntero al valor normalizado.
+func nonEmptyPtr(s string) *string {
+	s = normalizeMaybeEmpty(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// imageURLFromRow devuelve la URL final de la foto: nil si el Excel no trae
+// una, error si es inválida. Con --image-base solo se conserva el nombre del
+// archivo.
+func imageURLFromRow(row importer.ProductRow, imageBase string) (*string, error) {
+	raw := normalizeMaybeEmpty(row.Imagenes)
+	if raw == "" {
+		return nil, nil
+	}
+	raw = strings.TrimSpace(strings.Split(raw, ",")[0]) // WooCommerce: la primera es la principal
+	if imageBase != "" {
+		raw = strings.TrimRight(imageBase, "/") + "/" + path.Base(raw)
+	}
+	if !strings.HasPrefix(raw, "https://") || len(raw) > 500 {
+		return nil, fmt.Errorf("URL de imagen inválida o de más de 500 caracteres: %q", raw)
+	}
+	return &raw, nil
+}
+
 // isbnFromRow prioriza la columna GTIN/UPC/EAN/ISBN; si viene vacía, cae al
 // campo ISBN de los atributos (en la práctica traen el mismo valor). nil si
 // ninguna de las dos trae dato real.
@@ -243,8 +283,9 @@ func resolveCategory(db *gorm.DB, businessID uint, name string, dryRun bool) (id
 // upsertProduct crea o actualiza por (business_id, sku). Devuelve el ID real
 // del producto (0 en --dry-run, donde nunca se escribe). El costo nunca se
 // pisa en un update: si ya se cargó a mano una vez, una reimportación no lo
-// vuelve a 0.
-func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.ProductRow, dryRun bool) (id uint, created bool, err error) {
+// vuelve a 0. La foto y la descripción solo se escriben si el Excel las trae,
+// así una reimportación nunca borra una foto ya cargada.
+func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.ProductRow, imageURL *string, dryRun bool) (id uint, created bool, err error) {
 	var existing models.Product
 	err = db.Where("business_id = ? AND sku = ?", businessID, row.SKU).First(&existing).Error
 	notFound := errors.Is(err, gorm.ErrRecordNotFound)
@@ -259,17 +300,21 @@ func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.Produc
 		return existing.ID, false, nil
 	}
 
+	description := nonEmptyPtr(row.DescripcionCorta)
+
 	if notFound {
 		p := models.Product{
-			BusinessID: businessID,
-			Name:       row.Nombre,
-			SKU:        row.SKU,
-			ISBN:       isbnFromRow(row),
-			Price:      row.PrecioNormal,
-			Cost:       0,
-			Stock:      row.Inventario,
-			CategoryID: categoryID,
-			Active:     true,
+			BusinessID:  businessID,
+			Name:        row.Nombre,
+			SKU:         row.SKU,
+			ISBN:        isbnFromRow(row),
+			ImageURL:    imageURL,
+			Description: description,
+			Price:       row.PrecioNormal,
+			Cost:        0,
+			Stock:       row.Inventario,
+			CategoryID:  categoryID,
+			Active:      true,
 		}
 		if err := db.Create(&p).Error; err != nil {
 			return 0, false, err
@@ -283,6 +328,12 @@ func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.Produc
 		"price":       row.PrecioNormal,
 		"stock":       row.Inventario,
 		"category_id": categoryID,
+	}
+	if imageURL != nil {
+		updates["image_url"] = *imageURL
+	}
+	if description != nil {
+		updates["description"] = *description
 	}
 	if err := db.Model(&existing).Updates(updates).Error; err != nil {
 		return 0, false, err
