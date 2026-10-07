@@ -1,6 +1,14 @@
 // models/product.go
 package models
 
+import (
+	"fmt"
+
+	"gorm.io/gorm"
+
+	"github.com/neocode96/libsau/internal/slug"
+)
+
 type Category struct {
 	ID         uint     `gorm:"primaryKey" json:"id"`
 	BusinessID uint     `gorm:"not null;index;uniqueIndex:uq_category_business_name" json:"business_id"`
@@ -11,10 +19,15 @@ type Category struct {
 
 type Product struct {
 	ID         uint     `gorm:"primaryKey" json:"id"`
-	BusinessID uint     `gorm:"not null;index;uniqueIndex:uq_product_business_sku;uniqueIndex:uq_product_business_isbn,priority:1" json:"business_id"`
+	BusinessID uint     `gorm:"not null;index;uniqueIndex:uq_product_business_sku;uniqueIndex:uq_product_business_isbn,priority:1;uniqueIndex:uq_product_business_slug,priority:1" json:"business_id"`
 	Business   Business `gorm:"foreignKey:BusinessID" json:"-"`
 	Name       string   `json:"name"`
 	SKU        string   `gorm:"uniqueIndex:uq_product_business_sku" json:"sku"`
+	// Slug es la parte legible de la URL pública (/productos/<slug>). Se genera
+	// UNA sola vez al crear el producto (hook BeforeCreate) y ya no cambia, ni
+	// aunque cambie el nombre o la foto: una URL publicada y compartida no debe
+	// romperse. Único por negocio.
+	Slug string `gorm:"type:varchar(160);uniqueIndex:uq_product_business_slug,priority:2" json:"slug"`
 	// ISBN es el mismo concepto que GTIN/UPC/EAN en el Excel de onboarding:
 	// un identificador de barras universal. nil cuando el producto no lo
 	// trae (papelería, D'Nieve, autopublicados sin código). Único por
@@ -31,6 +44,34 @@ type Product struct {
 	Category    Category `gorm:"foreignKey:CategoryID" json:"category"`
 	Cost        float64  `gorm:"type:numeric(10,2);not null;default:0" json:"cost"`
 	Active      bool     `gorm:"default:true" json:"active"`
+}
+
+// BeforeCreate asigna el slug cuando el producto no trae uno. Corre en TODA
+// creación (importador, panel admin, seeds), así ningún camino puede insertar
+// un slug vacío y chocar con el índice único. Si la base ya existe en ese
+// negocio, prueba con -2, -3, ...
+func (p *Product) BeforeCreate(tx *gorm.DB) error {
+	if p.Slug != "" {
+		return nil
+	}
+	base := slug.ForProduct(p.ImageURL, p.Name)
+	candidate := base
+	for i := 2; i <= 999; i++ {
+		var n int64
+		err := tx.Session(&gorm.Session{NewDB: true}).
+			Model(&Product{}).
+			Where("business_id = ? AND slug = ?", p.BusinessID, candidate).
+			Count(&n).Error
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			p.Slug = candidate
+			return nil
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+	return fmt.Errorf("no se pudo generar un slug único para %q", p.Name)
 }
 
 // ProductAttribute guarda los atributos libres del Excel (Autor, Editorial,
