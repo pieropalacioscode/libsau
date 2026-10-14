@@ -6,7 +6,7 @@
 //	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante
 //	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante --dry-run
 //	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante --sheet=Alfaguara
-//	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante --image-base=https://img.docentesmart.com/libprep
+//	go run cmd/import/main.go --file=catalogo.xlsx --business=libros-el-estudiante --image-prefix=libprep
 //
 // Idempotente: correrlo dos veces con el mismo archivo no duplica productos
 // ni atributos (upsert por business_id+sku y por product_id+nombre). Si el
@@ -18,8 +18,8 @@
 // detiene y muestra los nombres reales en vez de adivinar cuál usar.
 //
 // Imágenes: se toma la primera URL de la columna de imágenes. Con
-// --image-base se conserva solo el nombre del archivo y se reescribe a
-// <image-base>/<archivo>. Una reimportación nunca borra una foto ya cargada.
+// --image-prefix se conserva solo el nombre del archivo y se guarda como ruta
+// relativa <prefijo>/<archivo> (la URL pública la arma MEDIA_BASE_URL). Una reimportación nunca borra una foto ya cargada.
 package main
 
 import (
@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path"
 	"strings"
 
 	"gorm.io/gorm"
@@ -45,8 +44,13 @@ func main() {
 	sheet := flag.String("sheet", "", "nombre de la hoja a leer (vacío = detectar automáticamente)")
 	dryRun := flag.Bool("dry-run", false, "parsea y valida sin escribir en la base de datos")
 	listSheets := flag.Bool("list-sheets", false, "lista las hojas del Excel y termina, sin importar nada")
-	imageBase := flag.String("image-base", "", "reescribe cada imagen a <image-base>/<archivo>, ej. https://img.docentesmart.com/libprep (vacío = usar la URL del Excel)")
+	imagePrefix := flag.String("image-prefix", "", "carpeta del negocio en el bucket, ej. libprep: guarda la imagen como ruta relativa <prefijo>/<archivo> (vacío = usar la URL https completa del Excel)")
 	flag.Parse()
+
+	prefix, err := cleanImagePrefix(*imagePrefix)
+	if err != nil {
+		log.Fatalf("❌ --image-prefix: %v", err)
+	}
 
 	if *listSheets {
 		if *file == "" {
@@ -65,7 +69,7 @@ func main() {
 	}
 
 	if *file == "" || *businessSlug == "" {
-		fmt.Println("uso: go run cmd/import/main.go --file=catalogo.xlsx --business=slug-del-negocio [--sheet=Nombre] [--image-base=URL] [--dry-run]")
+		fmt.Println("uso: go run cmd/import/main.go --file=catalogo.xlsx --business=slug-del-negocio [--sheet=Nombre] [--image-prefix=carpeta] [--dry-run]")
 		fmt.Println("     go run cmd/import/main.go --file=catalogo.xlsx --list-sheets")
 		os.Exit(1)
 	}
@@ -152,7 +156,7 @@ func main() {
 			fmt.Println("ℹ️  el Excel no trae columna de costo: todos los productos quedan con cost=0 (ajustar luego a mano)")
 		}
 
-		imageURL, imgErr := imageURLFromRow(row, *imageBase)
+		imageURL, imgErr := imageRefFromRow(row, prefix)
 		if imgErr != nil {
 			fmt.Printf("⚠️  fila %d: SKU %q: imagen ignorada: %v\n", row.RowIndex, row.SKU, imgErr)
 		}
@@ -222,24 +226,6 @@ func nonEmptyPtr(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// imageURLFromRow devuelve la URL final de la foto: nil si el Excel no trae
-// una, error si es inválida. Con --image-base solo se conserva el nombre del
-// archivo.
-func imageURLFromRow(row importer.ProductRow, imageBase string) (*string, error) {
-	raw := normalizeMaybeEmpty(row.Imagenes)
-	if raw == "" {
-		return nil, nil
-	}
-	raw = strings.TrimSpace(strings.Split(raw, ",")[0]) // WooCommerce: la primera es la principal
-	if imageBase != "" {
-		raw = strings.TrimRight(imageBase, "/") + "/" + path.Base(raw)
-	}
-	if !strings.HasPrefix(raw, "https://") || len(raw) > 500 {
-		return nil, fmt.Errorf("URL de imagen inválida o de más de 500 caracteres: %q", raw)
-	}
-	return &raw, nil
 }
 
 // isbnFromRow prioriza la columna GTIN/UPC/EAN/ISBN; si viene vacía, cae al
