@@ -12,8 +12,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/neocode96/libsau/internal/auth"
-	"github.com/neocode96/libsau/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/auth"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
 )
 
 // ─────────────────────────────────────────────

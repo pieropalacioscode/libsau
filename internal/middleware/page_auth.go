@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/neocode96/libsau/internal/auth"
+	"github.com/pieropalacioscode/ladmincabo/internal/auth"
 )
 
 // RequirePageAuth protege rutas HTML.

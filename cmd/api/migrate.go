@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/neocode96/libsau/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
 )
 
 func migrate(db *gorm.DB) error {

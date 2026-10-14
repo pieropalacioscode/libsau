@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/neocode96/libsau/internal/config"
+	"github.com/pieropalacioscode/ladmincabo/internal/config"
 )
 
 type Claims struct {

@@ -13,13 +13,13 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/neocode96/libsau/internal/auth"
-	"github.com/neocode96/libsau/internal/config"
-	"github.com/neocode96/libsau/internal/database"
-	"github.com/neocode96/libsau/internal/handlers"
-	"github.com/neocode96/libsau/internal/middleware"
-	"github.com/neocode96/libsau/internal/models"
-	"github.com/neocode96/libsau/internal/webhook"
+	"github.com/pieropalacioscode/ladmincabo/internal/auth"
+	"github.com/pieropalacioscode/ladmincabo/internal/config"
+	"github.com/pieropalacioscode/ladmincabo/internal/database"
+	"github.com/pieropalacioscode/ladmincabo/internal/handlers"
+	"github.com/pieropalacioscode/ladmincabo/internal/middleware"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/webhook"
 )
 
 func main() {

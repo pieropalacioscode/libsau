@@ -9,10 +9,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 
-	"github.com/neocode96/libsau/internal/auth"
-	"github.com/neocode96/libsau/internal/middleware"
-	"github.com/neocode96/libsau/internal/models"
-	"github.com/neocode96/libsau/internal/webhook"
+	"github.com/pieropalacioscode/ladmincabo/internal/auth"
+	"github.com/pieropalacioscode/ladmincabo/internal/middleware"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/webhook"
 )
 
 type WooConfirmHandler struct {

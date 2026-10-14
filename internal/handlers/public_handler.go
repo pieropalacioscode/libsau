@@ -10,8 +10,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/neocode96/libsau/internal/models"
-	"github.com/neocode96/libsau/internal/slug"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/slug"
 )
 
 // PublicHandler sirve el catálogo de solo lectura, sin JWT, identificado por

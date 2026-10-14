@@ -5,8 +5,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/neocode96/libsau/internal/middleware"
-	"github.com/neocode96/libsau/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/middleware"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
 )
 
 // requireFullTier devuelve el business_id del request solo si ese negocio es nivel FULL.

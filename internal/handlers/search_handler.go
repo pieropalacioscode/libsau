@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/neocode96/libsau/internal/middleware"
-	"github.com/neocode96/libsau/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/middleware"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
 	"gorm.io/gorm"
 )
 

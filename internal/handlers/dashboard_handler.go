@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/neocode96/libsau/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
 )
 
 // loc se inicializa una sola vez al arrancar el proceso.

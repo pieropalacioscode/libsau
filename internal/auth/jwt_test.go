@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/neocode96/libsau/internal/config"
+	"github.com/pieropalacioscode/ladmincabo/internal/config"
 )
 
 // Regresión: el secret debe leerse al usar, no al arrancar el paquete.

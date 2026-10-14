@@ -14,9 +14,9 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/neocode96/libsau/internal/config"
-	"github.com/neocode96/libsau/internal/database"
-	"github.com/neocode96/libsau/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/config"
+	"github.com/pieropalacioscode/ladmincabo/internal/database"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
 )
 
 var errRollback = errors.New("rollback intencional")

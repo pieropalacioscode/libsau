@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/neocode96/libsau/internal/slug"
+	"github.com/pieropalacioscode/ladmincabo/internal/slug"
 )
 
 type Category struct {

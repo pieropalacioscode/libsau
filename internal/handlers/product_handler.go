@@ -12,8 +12,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/neocode96/libsau/internal/middleware"
-	"github.com/neocode96/libsau/internal/models"
+	"github.com/pieropalacioscode/ladmincabo/internal/middleware"
+	"github.com/pieropalacioscode/ladmincabo/internal/models"
 )
 
 type ProductHandler struct {

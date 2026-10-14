@@ -1,4 +1,4 @@
-module github.com/neocode96/libsau
+module github.com/pieropalacioscode/ladmincabo
 
 go 1.25.0
 
