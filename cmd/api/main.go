@@ -17,6 +17,7 @@ import (
 	"github.com/pieropalacioscode/ladmincabo/internal/config"
 	"github.com/pieropalacioscode/ladmincabo/internal/database"
 	"github.com/pieropalacioscode/ladmincabo/internal/handlers"
+	"github.com/pieropalacioscode/ladmincabo/internal/media"
 	"github.com/pieropalacioscode/ladmincabo/internal/middleware"
 	"github.com/pieropalacioscode/ladmincabo/internal/models"
 	"github.com/pieropalacioscode/ladmincabo/internal/webhook"
@@ -90,7 +91,7 @@ func main() {
 	searchHandler := handlers.NewSearchHandler(db)
 	dashboardHandler := handlers.NewDashboardHandler(db)
 	cashHandler := handlers.NewCashHandler(db)
-	publicHandler := handlers.NewPublicHandler(db)
+	publicHandler := handlers.NewPublicHandler(db, media.NewResolver(config.MediaBaseURL))
 
 	// ── WooCommerce ────────────────────────────────────────────────────────────
 	wooHandler := webhook.NewWooWebhookHandler(db, rdb)

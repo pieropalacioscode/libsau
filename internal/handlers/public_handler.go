@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/pieropalacioscode/ladmincabo/internal/media"
 	"github.com/pieropalacioscode/ladmincabo/internal/models"
 	"github.com/pieropalacioscode/ladmincabo/internal/slug"
 )
@@ -18,11 +19,12 @@ import (
 // el slug del negocio. Usa los helpers respondJSON / respondError / pathID
 // definidos en product_handler.go (mismo package).
 type PublicHandler struct {
-	db *gorm.DB
+	db    *gorm.DB
+	media media.Resolver
 }
 
-func NewPublicHandler(db *gorm.DB) *PublicHandler {
-	return &PublicHandler{db: db}
+func NewPublicHandler(db *gorm.DB, m media.Resolver) *PublicHandler {
+	return &PublicHandler{db: db, media: m}
 }
 
 const (
@@ -119,13 +121,13 @@ func publicPositiveQuery(r *http.Request, key string, def int) (int, bool) {
 	return n, true
 }
 
-func toPublicProduct(p models.Product) publicProduct {
+func (h *PublicHandler) toPublicProduct(p models.Product) publicProduct {
 	return publicProduct{
 		ID:       p.ID,
 		Slug:     p.Slug,
 		Name:     p.Name,
 		Price:    p.Price,
-		ImageURL: p.ImageURL,
+		ImageURL: h.media.Ptr(p.ImageURL),
 		Category: publicCategoryRef{ID: p.Category.ID, Name: p.Category.Name},
 	}
 }
@@ -201,7 +203,7 @@ func (h *PublicHandler) Business(w http.ResponseWriter, r *http.Request) {
 		Slug:           b.Slug,
 		Name:           b.Name,
 		WhatsappNumber: b.WhatsappNumber,
-		LogoURL:        b.LogoURL,
+		LogoURL:        h.media.Ptr(b.LogoURL),
 		PrimaryColor:   b.PrimaryColor,
 	})
 }
@@ -274,7 +276,7 @@ func (h *PublicHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]publicProduct, 0, len(products))
 	for _, p := range products {
-		out = append(out, toPublicProduct(p))
+		out = append(out, h.toPublicProduct(p))
 	}
 
 	publicCache(w)
@@ -329,7 +331,7 @@ func (h *PublicHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	detail := publicProductDetail{
-		publicProduct: toPublicProduct(p),
+		publicProduct: h.toPublicProduct(p),
 		ISBN:          p.ISBN,
 		Description:   p.Description,
 		Attributes:    make([]publicAttribute, 0, len(attrs)),
