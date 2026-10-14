@@ -35,7 +35,7 @@ func GenerateAccessToken(userID uint, email, role string) (string, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "libsau",
+			Issuer:    jwtIssuer,
 		},
 	}
 
@@ -66,7 +66,7 @@ func ValidateAccessToken(tokenStr string) (*Claims, error) {
 	}
 
 	// 🔥 VALIDACIONES EXTRA (IMPORTANTE)
-	if claims.Issuer != "libsau" {
+	if claims.Issuer != jwtIssuer {
 		return nil, errors.New("issuer inválido")
 	}
 
@@ -79,7 +79,7 @@ func GenerateRefreshToken(userID uint) (string, error) {
 		Subject:   fmt.Sprintf("%d", userID),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		Issuer:    "libsau",
+		Issuer:    jwtIssuer,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -106,7 +106,7 @@ func ValidateRefreshToken(tokenStr string) (*jwt.RegisteredClaims, error) {
 	}
 
 	// 🔥 VALIDACIONES CRÍTICAS
-	if claims.Issuer != "libsau" {
+	if claims.Issuer != jwtIssuer {
 		return nil, errors.New("issuer inválido")
 	}
 

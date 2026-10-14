@@ -197,6 +197,6 @@ func main() {
 		})
 	})
 
-	log.Printf("🚀 LIBSAU corriendo en :%s", port)
+	log.Printf("🚀 ladmincabo corriendo en :%s", port)
 	http.ListenAndServe(":"+port, r)
 }

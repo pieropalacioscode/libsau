@@ -230,7 +230,7 @@ func (w *WooWorker) processOrder(ctx context.Context, order *WooOrder) error {
 		"unmapped":     len(unmapped),
 	}
 	if eventJSON, err := json.Marshal(event); err == nil {
-		if err := w.rdb.Publish(ctx, "libsau:events", eventJSON).Err(); err != nil {
+		if err := w.rdb.Publish(ctx, "ladmincabo:events", eventJSON).Err(); err != nil {
 			log.Printf("⚠️  WooWorker: no se pudo publicar evento: %v", err)
 		}
 	}

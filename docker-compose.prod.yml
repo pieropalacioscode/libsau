@@ -1,4 +1,4 @@
-name: libsau-prod
+name: ladmincabo-prod
 
 x-logging: &logging
   driver: json-file
