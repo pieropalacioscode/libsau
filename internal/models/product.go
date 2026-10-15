@@ -3,6 +3,7 @@ package models
 
 import (
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -11,9 +12,10 @@ import (
 
 type Category struct {
 	ID         uint     `gorm:"primaryKey" json:"id"`
-	BusinessID uint     `gorm:"not null;index;uniqueIndex:uq_category_business_name" json:"business_id"`
+	BusinessID uint     `gorm:"not null;index;uniqueIndex:uq_category_business_name;uniqueIndex:uq_category_business_slug,priority:1" json:"business_id"`
 	Business   Business `gorm:"foreignKey:BusinessID" json:"-"`
 	Name       string   `gorm:"uniqueIndex:uq_category_business_name;not null" json:"name"`
+	Slug       string   `gorm:"type:varchar(160);uniqueIndex:uq_category_business_slug,priority:2" json:"slug"`
 	Active     bool     `json:"active"`
 }
 
@@ -36,14 +38,16 @@ type Product struct {
 	ISBN *string `gorm:"type:varchar(20);uniqueIndex:uq_product_business_isbn,priority:2" json:"isbn,omitempty"`
 	// ImageURL es la URL completa de la foto (Cloudflare en la Fase 9).
 	// nil cuando el producto todavía no tiene foto.
-	ImageURL    *string  `gorm:"type:varchar(500)" json:"image_url,omitempty"`
-	Description *string  `gorm:"type:text" json:"description,omitempty"`
-	Price       float64  `gorm:"type:numeric(10,2);not null;default:0" json:"price"`
-	Stock       int      `json:"stock"`
-	CategoryID  uint     `json:"category_id"`
-	Category    Category `gorm:"foreignKey:CategoryID" json:"category"`
-	Cost        float64  `gorm:"type:numeric(10,2);not null;default:0" json:"cost"`
-	Active      bool     `gorm:"default:true" json:"active"`
+	ImageURL    *string   `gorm:"type:varchar(500)" json:"image_url,omitempty"`
+	Description *string   `gorm:"type:text" json:"description,omitempty"`
+	Price       float64   `gorm:"type:numeric(10,2);not null;default:0" json:"price"`
+	Stock       int       `json:"stock"`
+	CategoryID  uint      `json:"category_id"`
+	Category    Category  `gorm:"foreignKey:CategoryID" json:"category"`
+	Cost        float64   `gorm:"type:numeric(10,2);not null;default:0" json:"cost"`
+	Active      bool      `gorm:"default:true" json:"active"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // BeforeCreate asigna el slug cuando el producto no trae uno. Corre en TODA

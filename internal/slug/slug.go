@@ -83,3 +83,12 @@ func ForProduct(imageURL *string, name string) string {
 	}
 	return base
 }
+
+// ForCategory devuelve el slug de una categoria (URL publica /categoria/<slug>).
+// Nunca devuelve "".
+func ForCategory(name string) string {
+	if base := Slugify(name); base != "" {
+		return base
+	}
+	return "categoria"
+}

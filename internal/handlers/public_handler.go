@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
@@ -55,15 +56,17 @@ type publicBusiness struct {
 type publicCategoryRef struct {
 	ID   uint   `json:"id"`
 	Name string `json:"name"`
+	Slug string `json:"slug"`
 }
 
 type publicProduct struct {
-	ID       uint              `json:"id"`
-	Slug     string            `json:"slug"`
-	Name     string            `json:"name"`
-	Price    float64           `json:"price"`
-	ImageURL *string           `json:"image_url"`
-	Category publicCategoryRef `json:"category"`
+	ID        uint              `json:"id"`
+	Slug      string            `json:"slug"`
+	Name      string            `json:"name"`
+	Price     float64           `json:"price"`
+	ImageURL  *string           `json:"image_url"`
+	Category  publicCategoryRef `json:"category"`
+	UpdatedAt *time.Time        `json:"updated_at,omitempty"`
 }
 
 type publicAttribute struct {
@@ -81,6 +84,7 @@ type publicProductDetail struct {
 type publicCategory struct {
 	ID           uint   `json:"id"`
 	Name         string `json:"name"`
+	Slug         string `json:"slug"`
 	ProductCount int64  `json:"product_count"`
 }
 
@@ -123,12 +127,13 @@ func publicPositiveQuery(r *http.Request, key string, def int) (int, bool) {
 
 func (h *PublicHandler) toPublicProduct(p models.Product) publicProduct {
 	return publicProduct{
-		ID:       p.ID,
-		Slug:     p.Slug,
-		Name:     p.Name,
-		Price:    p.Price,
-		ImageURL: h.media.Ptr(p.ImageURL),
-		Category: publicCategoryRef{ID: p.Category.ID, Name: p.Category.Name},
+		ID:        p.ID,
+		Slug:      p.Slug,
+		Name:      p.Name,
+		Price:     p.Price,
+		ImageURL:  h.media.Ptr(p.ImageURL),
+		Category:  publicCategoryRef{ID: p.Category.ID, Name: p.Category.Name, Slug: p.Category.Slug},
+		UpdatedAt: optTime(p.UpdatedAt),
 	}
 }
 
@@ -210,7 +215,8 @@ func (h *PublicHandler) Business(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /public/{slug}/productos ─────────────────────────────────────────────
 // Query params opcionales: page (def 1), limit (def 100, máx 500), category_id
-// y q (búsqueda por palabras; ver applySearch).
+// q (búsqueda por palabras; ver applySearch), category (slug de la categoría)
+// y sort (name, price_asc, price_desc, newest, relevance).
 // Responde un array; el total (con los filtros aplicados) va en X-Total-Count.
 
 func (h *PublicHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +253,32 @@ func (h *PublicHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("products.category_id = ?", catID).Session(&gorm.Session{})
 	}
 
+	if raw := r.URL.Query().Get("category"); raw != "" {
+		if len(raw) > publicMaxSlugLen {
+			respondError(w, http.StatusNotFound, "categoría no encontrada")
+			return
+		}
+		var cat models.Category
+		err := h.db.Where("business_id = ? AND slug = ?", b.ID, raw).First(&cat).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			respondError(w, http.StatusNotFound, "categoría no encontrada")
+			return
+		}
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "error buscando categoría")
+			return
+		}
+		q = q.Where("products.category_id = ?", cat.ID).Session(&gorm.Session{})
+	}
+
+	sortKey := r.URL.Query().Get("sort")
+	if sortKey != "" && sortKey != "relevance" {
+		if _, known := publicSortSQL[sortKey]; !known {
+			respondError(w, http.StatusBadRequest, "sort inválido")
+			return
+		}
+	}
+
 	tokens := searchTokens(r.URL.Query().Get("q"))
 	if len(tokens) > 0 {
 		q = applySearch(q, tokens).Session(&gorm.Session{})
@@ -259,9 +291,12 @@ func (h *PublicHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	find := q.Preload("Category")
-	if len(tokens) > 0 {
+	switch {
+	case sortKey != "" && sortKey != "relevance":
+		find = find.Order(publicSortSQL[sortKey])
+	case len(tokens) > 0:
 		find = find.Clauses(relevanceOrder(tokens))
-	} else {
+	default:
 		find = find.Order("products.id")
 	}
 
@@ -356,10 +391,10 @@ func (h *PublicHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
 
 	rows := []publicCategory{}
 	if err := h.db.Table("categories AS c").
-		Select("c.id AS id, c.name AS name, COUNT(p.id) AS product_count").
+		Select("c.id AS id, c.name AS name, coalesce(c.slug, '') AS slug, COUNT(p.id) AS product_count").
 		Joins("JOIN products AS p ON p.category_id = c.id AND p.business_id = c.business_id AND p.active = ?", true).
 		Where("c.business_id = ?", b.ID).
-		Group("c.id, c.name").
+		Group("c.id, c.name, c.slug").
 		Order("c.name").
 		Scan(&rows).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, "error obteniendo categorías")
@@ -368,4 +403,21 @@ func (h *PublicHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
 
 	publicCache(w)
 	respondJSON(w, http.StatusOK, rows)
+}
+
+// publicSortSQL es la lista blanca de ordenamientos del listado. Lo que llega
+// por ?sort= solo se usa como CLAVE de este mapa, nunca se concatena al SQL.
+var publicSortSQL = map[string]string{
+	"name":       "products.name, products.id",
+	"price_asc":  "products.price, products.name, products.id",
+	"price_desc": "products.price DESC, products.name, products.id",
+	"newest":     "products.id DESC",
+}
+
+// optTime devuelve nil para la fecha cero (filas anteriores a la columna).
+func optTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
