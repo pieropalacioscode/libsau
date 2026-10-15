@@ -143,6 +143,7 @@ func main() {
 		r.Get("/productos", publicHandler.ListProducts)
 		r.Get("/productos/{id}", publicHandler.GetProduct)
 		r.Get("/categorias", publicHandler.ListCategories)
+		r.Get("/filtros", publicHandler.Filters)
 	})
 
 	// ── Páginas HTML ───────────────────────────────────────────────────────────

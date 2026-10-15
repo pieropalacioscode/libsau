@@ -216,7 +216,8 @@ func (h *PublicHandler) Business(w http.ResponseWriter, r *http.Request) {
 // ── GET /public/{slug}/productos ─────────────────────────────────────────────
 // Query params opcionales: page (def 1), limit (def 100, máx 500), category_id
 // q (búsqueda por palabras; ver applySearch), category (slug de la categoría)
-// y sort (name, price_asc, price_desc, newest, relevance).
+// y sort (name, price_asc, price_desc, newest, relevance), f=Atributo:Valor (repetible)
+// y min_price / max_price.
 // Responde un array; el total (con los filtros aplicados) va en X-Total-Count.
 
 func (h *PublicHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +284,12 @@ func (h *PublicHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	if len(tokens) > 0 {
 		q = applySearch(q, tokens).Session(&gorm.Session{})
 	}
+	spec, err := parseFilters(r.URL.Query())
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	q = applyFilters(q, spec, "").Session(&gorm.Session{})
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
