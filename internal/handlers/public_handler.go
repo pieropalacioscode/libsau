@@ -60,9 +60,10 @@ type publicBusiness struct {
 }
 
 type publicCategoryRef struct {
-	ID   uint   `json:"id"`
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	ID     uint               `json:"id"`
+	Name   string             `json:"name"`
+	Slug   string             `json:"slug"`
+	Parent *publicCategoryRef `json:"parent,omitempty"`
 }
 
 type publicProduct struct {
@@ -88,10 +89,11 @@ type publicProductDetail struct {
 }
 
 type publicCategory struct {
-	ID           uint   `json:"id"`
-	Name         string `json:"name"`
-	Slug         string `json:"slug"`
-	ProductCount int64  `json:"product_count"`
+	ID           uint    `json:"id"`
+	Name         string  `json:"name"`
+	Slug         string  `json:"slug"`
+	ProductCount int64   `json:"product_count"`
+	ParentSlug   *string `json:"parent_slug"`
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -269,7 +271,12 @@ func (h *PublicHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "error buscando categoría")
 			return
 		}
-		q = q.Where("products.category_id = ?", cat.ID).Session(&gorm.Session{})
+		ids, err := categorySubtreeIDs(h.db, b.ID, cat.ID)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "error buscando categoría")
+			return
+		}
+		q = q.Where("products.category_id IN ?", ids).Session(&gorm.Session{})
 	}
 
 	sortKey := r.URL.Query().Get("sort")
@@ -378,38 +385,13 @@ func (h *PublicHandler) GetProduct(w http.ResponseWriter, r *http.Request) {
 		Description:   p.Description,
 		Attributes:    make([]publicAttribute, 0, len(attrs)),
 	}
+	detail.Category.Parent = h.parentRef(b.ID, p.Category.ParentID)
 	for _, a := range attrs {
 		detail.Attributes = append(detail.Attributes, publicAttribute{Name: a.Name, Value: a.Value})
 	}
 
 	publicCache(w)
 	respondJSON(w, http.StatusOK, detail)
-}
-
-// ── GET /public/{slug}/categorias ────────────────────────────────────────────
-// Solo categorías que tienen al menos un producto activo en este negocio.
-// Hoy el modelo Category no tiene ParentID, así que la lista es plana.
-
-func (h *PublicHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
-	b, ok := h.resolve(w, r)
-	if !ok {
-		return
-	}
-
-	rows := []publicCategory{}
-	if err := h.db.Table("categories AS c").
-		Select("c.id AS id, c.name AS name, coalesce(c.slug, '') AS slug, COUNT(p.id) AS product_count").
-		Joins("JOIN products AS p ON p.category_id = c.id AND p.business_id = c.business_id AND p.active = ?", true).
-		Where("c.business_id = ?", b.ID).
-		Group("c.id, c.name, c.slug").
-		Order("c.name").
-		Scan(&rows).Error; err != nil {
-		respondError(w, http.StatusInternalServerError, "error obteniendo categorías")
-		return
-	}
-
-	publicCache(w)
-	respondJSON(w, http.StatusOK, rows)
 }
 
 // publicSortSQL es la lista blanca de ordenamientos del listado. Lo que llega

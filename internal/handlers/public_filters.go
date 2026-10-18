@@ -141,7 +141,7 @@ func (h *PublicHandler) Filters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var catID uint
+	var catIDs []uint
 	if raw := query.Get("category"); raw != "" {
 		if len(raw) > publicMaxSlugLen {
 			respondError(w, http.StatusNotFound, "categoría no encontrada")
@@ -157,7 +157,12 @@ func (h *PublicHandler) Filters(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "error buscando categoría")
 			return
 		}
-		catID = cat.ID
+		ids, err := categorySubtreeIDs(h.db, b.ID, cat.ID)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "error buscando categoría")
+			return
+		}
+		catIDs = ids
 	}
 	tokens := searchTokens(query.Get("q"))
 	fail := func() { respondError(w, http.StatusInternalServerError, "error obteniendo filtros") }
@@ -167,8 +172,8 @@ func (h *PublicHandler) Filters(w http.ResponseWriter, r *http.Request) {
 	scoped := func(excludeAttr string, skipCategory bool) *gorm.DB {
 		q := h.db.Model(&models.Product{}).
 			Where("products.business_id = ? AND products.active = ?", b.ID, true)
-		if catID != 0 && !skipCategory {
-			q = q.Where("products.category_id = ?", catID)
+		if len(catIDs) > 0 && !skipCategory {
+			q = q.Where("products.category_id IN ?", catIDs)
 		}
 		if len(tokens) > 0 {
 			q = applySearch(q, tokens)
@@ -178,15 +183,20 @@ func (h *PublicHandler) Filters(w http.ResponseWriter, r *http.Request) {
 
 	out := publicFilters{Categories: []publicCategory{}, Attributes: []facetAttribute{}}
 
+	var direct []categoryCount
 	if err := scoped("", true).
-		Joins("JOIN categories cat ON cat.id = products.category_id").
-		Select("cat.id AS id, cat.name AS name, coalesce(cat.slug, '') AS slug, COUNT(products.id) AS product_count").
-		Group("cat.id, cat.name, cat.slug").
-		Order("cat.name").
-		Scan(&out.Categories).Error; err != nil {
+		Select("products.category_id AS category_id, COUNT(products.id) AS n").
+		Group("products.category_id").
+		Scan(&direct).Error; err != nil {
 		fail()
 		return
 	}
+	cats, err := loadCategories(h.db, b.ID)
+	if err != nil {
+		fail()
+		return
+	}
+	out.Categories = categoryTree(cats, directCounts(direct))
 	if err := scoped("", false).Count(&out.Total).Error; err != nil {
 		fail()
 		return
@@ -197,6 +207,7 @@ func (h *PublicHandler) Filters(w http.ResponseWriter, r *http.Request) {
 	var catalogTotal int64
 	if err := h.db.Model(&models.Product{}).
 		Where("business_id = ? AND active = ?", b.ID, true).
+		Scopes(inCategories(catIDs, "category_id")).
 		Count(&catalogTotal).Error; err != nil {
 		fail()
 		return
@@ -210,6 +221,7 @@ func (h *PublicHandler) Filters(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Table("product_attributes AS pa").
 		Select("pa.name AS name, COUNT(DISTINCT pa.value) AS valores, COUNT(DISTINCT pa.product_id) AS n_products").
 		Joins("JOIN products AS p ON p.id = pa.product_id AND p.business_id = ? AND p.active = ?", b.ID, true).
+		Scopes(inCategories(catIDs, "p.category_id")).
 		Group("pa.name").
 		Scan(&stats).Error; err != nil {
 		fail()
@@ -254,6 +266,7 @@ func (h *PublicHandler) Filters(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.db.Model(&models.Product{}).
 		Where("business_id = ? AND active = ?", b.ID, true).
+		Scopes(inCategories(catIDs, "category_id")).
 		Select("MIN(price) AS min_price, MAX(price) AS max_price").
 		Scan(&pr).Error; err != nil {
 		fail()

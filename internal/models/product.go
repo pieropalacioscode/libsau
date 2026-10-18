@@ -16,7 +16,9 @@ type Category struct {
 	Business   Business `gorm:"foreignKey:BusinessID" json:"-"`
 	Name       string   `gorm:"uniqueIndex:uq_category_business_name;not null" json:"name"`
 	Slug       string   `gorm:"type:varchar(160);uniqueIndex:uq_category_business_slug,priority:2" json:"slug"`
-	Active     bool     `json:"active"`
+	// ParentID es la categoría padre (nil = grupo raíz). El nombre sigue siendo único por negocio.
+	ParentID *uint `gorm:"index" json:"parent_id,omitempty"`
+	Active   bool  `json:"active"`
 }
 
 type Product struct {

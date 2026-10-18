@@ -45,6 +45,7 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "parsea y valida sin escribir en la base de datos")
 	listSheets := flag.Bool("list-sheets", false, "lista las hojas del Excel y termina, sin importar nada")
 	imagePrefix := flag.String("image-prefix", "", "carpeta del negocio en el bucket, ej. libprep: guarda la imagen como ruta relativa <prefijo>/<archivo> (vacío = usar la URL https completa del Excel)")
+	respectPublished := flag.Bool("respect-published", false, "respeta la columna Publicado: los que no valen 1 quedan inactivos (por defecto todo queda activo)")
 	flag.Parse()
 
 	prefix, err := cleanImagePrefix(*imagePrefix)
@@ -122,7 +123,8 @@ func main() {
 	}
 
 	created, updated, skipped, attrsTotal := 0, 0, 0, 0
-	newCategories := map[string]bool{}
+	cats := newCategoryResolver(db, biz.ID, *dryRun)
+	inactive := 0
 	seenSKU := make(map[string]int, len(result.Rows))
 	costWarned := false
 
@@ -132,21 +134,18 @@ func main() {
 			fmt.Printf("⚠️  fila %d: SKU %q repetido dentro del archivo — se queda con los datos de esta fila\n", row.RowIndex, row.SKU)
 		}
 
-		catName := lastCategoryLevel(row.Categorias)
-		if catName == "" {
+		path := splitCategoryPath(row.Categorias)
+		if len(path) == 0 {
 			fmt.Printf("⚠️  fila %d: SKU %q sin categoría — se omite\n", row.RowIndex, row.SKU)
 			skipped++
 			continue
 		}
 
-		catID, catIsNew, err := resolveCategory(db, biz.ID, catName, *dryRun)
+		catID, err := cats.Resolve(path)
 		if err != nil {
-			fmt.Printf("⚠️  fila %d: no se pudo resolver la categoría %q: %v — se omite\n", row.RowIndex, catName, err)
+			fmt.Printf("⚠️  fila %d: SKU %q: categoría %q: %v — se omite\n", row.RowIndex, row.SKU, strings.Join(path, " > "), err)
 			skipped++
 			continue
-		}
-		if catIsNew {
-			newCategories[catName] = true
 		}
 
 		// Este formato de WooCommerce no trae columna de costo — se avisa
@@ -161,7 +160,10 @@ func main() {
 			fmt.Printf("⚠️  fila %d: SKU %q: imagen ignorada: %v\n", row.RowIndex, row.SKU, imgErr)
 		}
 
-		productID, wasCreated, err := upsertProduct(db, biz.ID, catID, row, imageURL, *dryRun)
+		if *respectPublished && !row.Publicado {
+			inactive++
+		}
+		productID, wasCreated, err := upsertProduct(db, biz.ID, catID, row, imageURL, *dryRun, *respectPublished)
 		if err != nil {
 			fmt.Printf("⚠️  fila %d: no se pudo guardar el producto SKU %q: %v\n", row.RowIndex, row.SKU, err)
 			skipped++
@@ -185,11 +187,19 @@ func main() {
 		verb = "se crearían"
 	}
 	fmt.Printf("\n✅ negocio %q: %d %s, %d actualizados/a actualizar, %d omitidos, %d con error de datos, %d categoría(s) nueva(s), %d atributo(s)\n",
-		*businessSlug, created, verb, updated, skipped, len(result.RowErrors), len(newCategories), attrsTotal)
-	if *dryRun && len(newCategories) > 0 {
-		for name := range newCategories {
-			fmt.Printf("   - categoría nueva: %q\n", name)
+		*businessSlug, created, verb, updated, skipped, len(result.RowErrors), len(cats.created), attrsTotal)
+	if len(cats.created) > 0 {
+		fmt.Println("Categorías nuevas:")
+		for _, name := range cats.created {
+			if n := cats.nodes[name]; n.Parent == "" {
+				fmt.Printf("   - %q (grupo)\n", name)
+			} else {
+				fmt.Printf("   - %q  ← bajo %q\n", name, n.Parent)
+			}
 		}
+	}
+	if *respectPublished {
+		fmt.Printf("ℹ️  --respect-published: %d producto(s) con Publicado distinto de 1 quedan inactivos\n", inactive)
 	}
 }
 
@@ -199,13 +209,6 @@ func quoteAll(ss []string) []string {
 		out[i] = fmt.Sprintf("%q", s)
 	}
 	return out
-}
-
-// lastCategoryLevel usa solo el último nivel de una jerarquía "A > B > C",
-// según fase_04_importador_excel.md.
-func lastCategoryLevel(raw string) string {
-	parts := strings.Split(raw, ">")
-	return strings.TrimSpace(parts[len(parts)-1])
 }
 
 // normalizeMaybeEmpty trata "-" (el placeholder que usa este Excel para "sin
@@ -242,36 +245,12 @@ func isbnFromRow(row importer.ProductRow) *string {
 	return &v
 }
 
-// resolveCategory reutiliza la categoría si ya existe para ese negocio, o la
-// crea si no. Nunca reutiliza ni crea categorías de otro negocio.
-// En --dry-run no escribe: si no existe, devuelve isNew=true sin crearla.
-func resolveCategory(db *gorm.DB, businessID uint, name string, dryRun bool) (id uint, isNew bool, err error) {
-	var cat models.Category
-	err = db.Where("business_id = ? AND name = ?", businessID, name).First(&cat).Error
-	if err == nil {
-		return cat.ID, false, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return 0, false, err
-	}
-
-	if dryRun {
-		return 0, true, nil
-	}
-
-	cat = models.Category{BusinessID: businessID, Name: name, Active: true}
-	if err := db.Create(&cat).Error; err != nil {
-		return 0, false, err
-	}
-	return cat.ID, true, nil
-}
-
 // upsertProduct crea o actualiza por (business_id, sku). Devuelve el ID real
 // del producto (0 en --dry-run, donde nunca se escribe). El costo nunca se
 // pisa en un update: si ya se cargó a mano una vez, una reimportación no lo
 // vuelve a 0. La foto y la descripción solo se escriben si el Excel las trae,
 // así una reimportación nunca borra una foto ya cargada.
-func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.ProductRow, imageURL *string, dryRun bool) (id uint, created bool, err error) {
+func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.ProductRow, imageURL *string, dryRun, respectPublished bool) (id uint, created bool, err error) {
 	var existing models.Product
 	err = db.Where("business_id = ? AND sku = ?", businessID, row.SKU).First(&existing).Error
 	notFound := errors.Is(err, gorm.ErrRecordNotFound)
@@ -287,6 +266,7 @@ func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.Produc
 	}
 
 	description := nonEmptyPtr(row.DescripcionCorta)
+	active := !respectPublished || row.Publicado
 
 	if notFound {
 		p := models.Product{
@@ -300,9 +280,9 @@ func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.Produc
 			Cost:        0,
 			Stock:       row.Inventario,
 			CategoryID:  categoryID,
-			Active:      true,
+			Active:      active,
 		}
-		if err := db.Create(&p).Error; err != nil {
+		if err := createProduct(db, &p); err != nil {
 			return 0, false, err
 		}
 		return p.ID, true, nil
@@ -320,6 +300,9 @@ func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.Produc
 	}
 	if description != nil {
 		updates["description"] = *description
+	}
+	if respectPublished {
+		updates["active"] = active
 	}
 	if err := db.Model(&existing).Updates(updates).Error; err != nil {
 		return 0, false, err
