@@ -51,6 +51,12 @@ type publicBusiness struct {
 	WhatsappNumber *string `json:"whatsapp_number"`
 	LogoURL        *string `json:"logo_url"`
 	PrimaryColor   *string `json:"primary_color"`
+	AccentColor    *string `json:"accent_color"`
+	InstagramURL   *string `json:"instagram_url"`
+	TikTokURL      *string `json:"tiktok_url"`
+	FacebookURL    *string `json:"facebook_url"`
+	Address        *string `json:"address"`
+	OpeningHours   *string `json:"opening_hours"`
 }
 
 type publicCategoryRef struct {
@@ -204,13 +210,7 @@ func (h *PublicHandler) Business(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	publicCache(w)
-	respondJSON(w, http.StatusOK, publicBusiness{
-		Slug:           b.Slug,
-		Name:           b.Name,
-		WhatsappNumber: b.WhatsappNumber,
-		LogoURL:        h.media.Ptr(b.LogoURL),
-		PrimaryColor:   b.PrimaryColor,
-	})
+	respondJSON(w, http.StatusOK, newPublicBusiness(b, h.media.Ptr(b.LogoURL)))
 }
 
 // ── GET /public/{slug}/productos ─────────────────────────────────────────────
