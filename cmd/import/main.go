@@ -125,6 +125,7 @@ func main() {
 	created, updated, skipped, attrsTotal := 0, 0, 0, 0
 	cats := newCategoryResolver(db, biz.ID, *dryRun)
 	inactive := 0
+	provStats := newProviderStats()
 	seenSKU := make(map[string]int, len(result.Rows))
 	costWarned := false
 
@@ -180,7 +181,20 @@ func main() {
 			fmt.Printf("⚠️  fila %d: SKU %q se guardó, pero falló al guardar sus atributos: %v\n", row.RowIndex, row.SKU, err)
 		}
 		attrsTotal += attrsWritten
+
+		provider, provErr := providerFromRow(row.Proveedor)
+		if provErr != nil {
+			fmt.Printf("⚠️  fila %d: SKU %q: proveedor ignorado: %v\n", row.RowIndex, row.SKU, provErr)
+		}
+		provStats.add(provider)
+		if n, err := upsertProvider(db, productID, provider, *dryRun); err != nil {
+			fmt.Printf("⚠️  fila %d: SKU %q se guardó, pero falló al guardar su proveedor: %v\n", row.RowIndex, row.SKU, err)
+		} else {
+			attrsTotal += n
+		}
 	}
+
+	provStats.report()
 
 	verb := "creados"
 	if *dryRun {
