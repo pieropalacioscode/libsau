@@ -9,10 +9,10 @@ import (
 func TestNormalizeProvider(t *testing.T) {
 	cases := map[string]string{
 		"  ProveedorA ": "ProveedorA",
-		"-":            "",
-		"":             "",
-		"Mily   Books": "Mily Books",
-		"\tÁlvaro\n":   "Álvaro",
+		"-":             "",
+		"":              "",
+		"Mily   Books":  "Mily Books",
+		"\tÁlvaro\n":    "Álvaro",
 	}
 	for in, want := range cases {
 		if got := normalizeProvider(in); got != want {
