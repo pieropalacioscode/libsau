@@ -46,6 +46,7 @@ func main() {
 	listSheets := flag.Bool("list-sheets", false, "lista las hojas del Excel y termina, sin importar nada")
 	imagePrefix := flag.String("image-prefix", "", "carpeta del negocio en el bucket, ej. libprep: guarda la imagen como ruta relativa <prefijo>/<archivo> (vacío = usar la URL https completa del Excel)")
 	respectPublished := flag.Bool("respect-published", false, "respeta la columna Publicado: los que no valen 1 quedan inactivos (por defecto todo queda activo)")
+	strictISBN := flag.Bool("strict-isbn", false, "valida el ISBN/GTIN (dígito de control y códigos de ejemplo), convierte ISBN-10 a ISBN-13 y vacía lo inválido; sin esto solo se vacían los repetidos")
 	flag.Parse()
 
 	prefix, err := cleanImagePrefix(*imagePrefix)
@@ -126,6 +127,13 @@ func main() {
 	cats := newCategoryResolver(db, biz.ID, *dryRun)
 	inactive := 0
 	provStats := newProviderStats()
+	isbns := newISBNGuard(*strictISBN, func(isbn, sku string) string {
+		var skus []string
+		if err := db.Model(&models.Product{}).Where("business_id = ? AND isbn = ? AND sku <> ?", biz.ID, isbn, sku).Limit(1).Pluck("sku", &skus).Error; err != nil || len(skus) == 0 {
+			return ""
+		}
+		return skus[0]
+	})
 	seenSKU := make(map[string]int, len(result.Rows))
 	costWarned := false
 
@@ -161,6 +169,10 @@ func main() {
 			fmt.Printf("⚠️  fila %d: SKU %q: imagen ignorada: %v\n", row.RowIndex, row.SKU, imgErr)
 		}
 
+		// Un ISBN ya usado por otro SKU (en este archivo o en la base) se importa vacío con un aviso,
+		// en vez de omitir el producto.
+		isbns.apply(&row)
+
 		if *respectPublished && !row.Publicado {
 			inactive++
 		}
@@ -195,6 +207,7 @@ func main() {
 	}
 
 	provStats.report()
+	isbns.report()
 
 	verb := "creados"
 	if *dryRun {
