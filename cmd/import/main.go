@@ -46,8 +46,12 @@ func main() {
 	listSheets := flag.Bool("list-sheets", false, "lista las hojas del Excel y termina, sin importar nada")
 	imagePrefix := flag.String("image-prefix", "", "carpeta del negocio en el bucket, ej. libprep: guarda la imagen como ruta relativa <prefijo>/<archivo> (vacío = usar la URL https completa del Excel)")
 	respectPublished := flag.Bool("respect-published", false, "respeta la columna Publicado: los que no valen 1 quedan inactivos (por defecto todo queda activo)")
+	keepPrices := flag.Bool("keep-prices", false, "no actualiza los precios de productos que ya existen (el ensayo igual muestra las diferencias)")
+	keepAttrs := flag.String("keep-attrs", "", "atributos cuyo valor ya guardado no se pisa, separados por coma (ej. Impresión)")
 	strictISBN := flag.Bool("strict-isbn", false, "valida el ISBN/GTIN (dígito de control y códigos de ejemplo), convierte ISBN-10 a ISBN-13 y vacía lo inválido; sin esto solo se vacían los repetidos")
 	flag.Parse()
+	importOpts.keepPrices = *keepPrices
+	setKeepAttrs(*keepAttrs)
 
 	prefix, err := cleanImagePrefix(*imagePrefix)
 	if err != nil {
@@ -127,6 +131,7 @@ func main() {
 	cats := newCategoryResolver(db, biz.ID, *dryRun)
 	inactive := 0
 	provStats := newProviderStats()
+	attrStats := newAttrStats()
 	isbns := newISBNGuard(*strictISBN, func(isbn, sku string) string {
 		var skus []string
 		if err := db.Model(&models.Product{}).Where("business_id = ? AND isbn = ? AND sku <> ?", biz.ID, isbn, sku).Limit(1).Pluck("sku", &skus).Error; err != nil || len(skus) == 0 {
@@ -199,6 +204,17 @@ func main() {
 			fmt.Printf("⚠️  fila %d: SKU %q: proveedor ignorado: %v\n", row.RowIndex, row.SKU, provErr)
 		}
 		provStats.add(provider)
+		attrStats.add(row.Atributos)
+		if brand, berr := brandFromRow(row.Marcas); berr != nil {
+			fmt.Printf("⚠️  fila %d: SKU %q: marca ignorada: %v\n", row.RowIndex, row.SKU, berr)
+		} else if brand != "" && !blockHasAttr(row.Atributos, brandAttrName) {
+			attrStats.addValue(brandAttrName, brand)
+			if n, err := upsertNamedAttribute(db, productID, brandAttrName, brand, *dryRun); err != nil {
+				fmt.Printf("⚠️  fila %d: SKU %q: marca no guardada: %v\n", row.RowIndex, row.SKU, err)
+			} else {
+				attrsTotal += n
+			}
+		}
 		if n, err := upsertProvider(db, productID, provider, *dryRun); err != nil {
 			fmt.Printf("⚠️  fila %d: SKU %q se guardó, pero falló al guardar su proveedor: %v\n", row.RowIndex, row.SKU, err)
 		} else {
@@ -207,6 +223,9 @@ func main() {
 	}
 
 	provStats.report()
+	priceReport.report(importOpts.keepPrices, *dryRun)
+	attrDiff.report()
+	attrStats.report()
 	isbns.report()
 
 	verb := "creados"
@@ -284,6 +303,9 @@ func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.Produc
 	if err != nil && !notFound {
 		return 0, false, err
 	}
+	if !notFound {
+		priceReport.note(row.SKU, existing.Price, row.PrecioNormal)
+	}
 
 	if dryRun {
 		if notFound {
@@ -315,22 +337,7 @@ func upsertProduct(db *gorm.DB, businessID, categoryID uint, row importer.Produc
 		return p.ID, true, nil
 	}
 
-	updates := map[string]any{
-		"name":        row.Nombre,
-		"isbn":        isbnFromRow(row),
-		"price":       row.PrecioNormal,
-		"stock":       row.Inventario,
-		"category_id": categoryID,
-	}
-	if imageURL != nil {
-		updates["image_url"] = *imageURL
-	}
-	if description != nil {
-		updates["description"] = *description
-	}
-	if respectPublished {
-		updates["active"] = active
-	}
+	updates := buildProductUpdates(row, categoryID, imageURL, description, active, respectPublished, importOpts.keepPrices)
 	if err := db.Model(&existing).Updates(updates).Error; err != nil {
 		return 0, false, err
 	}
@@ -361,6 +368,7 @@ func upsertAttributes(db *gorm.DB, productID uint, atributos [16]importer.Atribu
 		}
 
 		if dryRun {
+			attrDiff.noteDry(db, productID, name, value)
 			written++
 			continue
 		}
@@ -375,6 +383,10 @@ func upsertAttributes(db *gorm.DB, productID uint, atributos [16]importer.Atribu
 		case err != nil:
 			return written, err
 		case existing.Value != value:
+			attrDiff.note(name, existing.Value, value)
+			if keepsAttr(name) {
+				break
+			}
 			if err := db.Model(&existing).Update("value", value).Error; err != nil {
 				return written, err
 			}
